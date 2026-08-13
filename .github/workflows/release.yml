@@ -17,19 +17,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Read version from TOC
+      - name: Find addon TOC and read version
         id: version
         shell: bash
         run: |
-          VERSION=$(grep -E '^## Version:' GMHelper/GMHelper.toc | sed 's/^## Version:[[:space:]]*//')
+            TOC_FILE=$(find . -type f -name "GMHelper.toc" | head -n 1)
 
-          if [ -z "$VERSION" ]; then
-            echo "Version was not found in GMHelper.toc"
+            if [ -z "$TOC_FILE" ]; then
+            echo "GMHelper.toc was not found"
+            echo "Repository structure:"
+            find . -maxdepth 3 -type f | sort
             exit 1
-          fi
+            fi
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Detected version: $VERSION"
+            echo "Found TOC: $TOC_FILE"
+
+            VERSION=$(grep -E '^## Version:' "$TOC_FILE" | sed 's/^## Version:[[:space:]]*//')
+
+            if [ -z "$VERSION" ]; then
+            echo "Version was not found in $TOC_FILE"
+            exit 1
+            fi
+
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "toc_file=$TOC_FILE" >> "$GITHUB_OUTPUT"
+            echo "Detected version: $VERSION"
 
       - name: Verify tag matches TOC version
         shell: bash
@@ -45,12 +57,17 @@ jobs:
       - name: Create addon archive
         shell: bash
         run: |
-          mkdir -p dist
+            mkdir -p dist
 
-          zip -r \
+            TOC_FILE="${{ steps.version.outputs.toc_file }}"
+            ADDON_DIR=$(dirname "$TOC_FILE")
+
+            echo "Addon directory: $ADDON_DIR"
+
+            zip -r \
             "dist/GMHelper-${{ steps.version.outputs.version }}.zip" \
-            GMHelper
-
+            "$ADDON_DIR"
+      
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
