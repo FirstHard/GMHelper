@@ -121,7 +121,7 @@
 
 ## Установка
 
-1. Скачайте [последнюю версию GMHelper](https://github.com/YOUR-USERNAME/GMHelper/releases/latest).
+1. Скачайте [последнюю версию GMHelper](https://github.com/FirstHard/GMHelper/releases/latest).
 2. Распакуйте архив.
 3. Поместите папку `GMHelper` в:
 

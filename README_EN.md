@@ -121,7 +121,7 @@ Before the operation starts, GMHelper displays a confirmation dialog containing 
 
 ## Installation
 
-1. Download the [latest GMHelper release](https://github.com/YOUR-USERNAME/GMHelper/releases/latest).
+1. Download the [latest GMHelper release](https://github.com/FirstHard/GMHelper/releases/latest).
 2. Extract the archive.
 3. Place the `GMHelper` folder into:
 
