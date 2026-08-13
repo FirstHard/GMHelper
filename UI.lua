@@ -548,12 +548,19 @@ function GMH.UI:CreateMainFrame()
 
         self:SetVerticalScroll(current)
 
+        if GMH.UI.RenderVisibleRows then
+            GMH.UI:RenderVisibleRows()
+        end
+
         if GMH.UI.UpdateScrollbar then
             GMH.UI:UpdateScrollbar()
         end
     end)
 
     scroll:SetScript("OnVerticalScroll", function(self)
+        if GMH.UI.RenderVisibleRows then
+            GMH.UI:RenderVisibleRows()
+        end
         if GMH.UI.UpdateScrollbar then
             GMH.UI:UpdateScrollbar()
         end
@@ -638,6 +645,9 @@ function GMH.UI:CreateMainFrame()
         end
 
         GMH.UI.scroll:SetVerticalScroll(current)
+        if GMH.UI.RenderVisibleRows then
+            GMH.UI:RenderVisibleRows()
+        end
     end)
 
     scrollbar.thumb = thumb
@@ -687,10 +697,13 @@ function GMH.UI:CreateMainFrame()
 end
 
 function GMH.UI:CreateColumns()
+    local canRemoveMembers = GMH.Permissions:Can("remove_member")
+    local selectionWidth = canRemoveMembers and 36 or 0
+
     local columns = {{
         key = "selected",
         label = "",
-        width = 36,
+        width = selectionWidth,
         align = "CENTER"
     }, {
         key = "name",
@@ -738,44 +751,44 @@ function GMH.UI:CreateColumns()
         self.columns[column.key] = column
 
         if column.key == "selected" then
-            --------------------------------------------------------
-            -- Чекбокс в заголовке: выбрать/снять все строки,
-            -- попавшие в текущую выборку по фильтру.
-            --------------------------------------------------------
-            local selectAll = CreateFrame("CheckButton", nil, button, "UICheckButtonTemplate")
+            if canRemoveMembers then
+                local selectAll = CreateFrame("CheckButton", nil, button, "UICheckButtonTemplate")
+                selectAll:SetWidth(24)
+                selectAll:SetHeight(24)
+                selectAll:SetPoint("CENTER", button, "CENTER", 0, 0)
+                selectAll:EnableMouse(true)
+                selectAll:RegisterForClicks("LeftButtonUp")
+                selectAll:SetHitRectInsets(0, 0, 0, 0)
 
-            selectAll:SetWidth(24)
-            selectAll:SetHeight(24)
-            selectAll:SetPoint("CENTER", button, "CENTER", 0, 0)
-            selectAll:EnableMouse(true)
-            selectAll:RegisterForClicks("LeftButtonUp")
-            selectAll:SetHitRectInsets(0, 0, 0, 0)
+                selectAll:SetScript("OnClick", function(self)
+                    local members = GMH.UI:GetRosterData()
+                    local visible = {}
 
-            selectAll:SetScript("OnClick", function(self)
-                local members = GMH.UI:GetRosterData()
-                local visible = {}
-
-                for _, member in ipairs(members) do
-                    if GMH.UI:MatchesFilter(member) then
-                        visible[#visible + 1] = member
+                    for _, member in ipairs(members) do
+                        if GMH.UI:MatchesFilter(member) then
+                            visible[#visible + 1] = member
+                        end
                     end
-                end
 
-                local selectState = self:GetChecked() and true or false
+                    local selectState = self:GetChecked() and true or false
+                    for _, member in ipairs(visible) do
+                        member.selected = selectState
+                    end
 
-                for _, member in ipairs(visible) do
-                    member.selected = selectState
-                end
+                    GMH.UI:RefreshRoster()
+                end)
 
-                GMH.UI:RefreshRoster()
-            end)
+                column.selectAll = selectAll
+                column.labelObject = nil
 
-            column.selectAll = selectAll
-            column.labelObject = nil
-            button:SetScript("OnClick", function()
-                selectAll:SetChecked(not selectAll:GetChecked())
-                selectAll:Click()
-            end)
+                button:SetScript("OnClick", function()
+                    selectAll:SetChecked(not selectAll:GetChecked())
+                    selectAll:Click()
+                end)
+            else
+                column.selectAll = nil
+                column.labelObject = nil
+            end
         else
             local label = CreateText(button, 10, COLORS.muted, column.align)
             label:SetPoint("LEFT", button, "LEFT", column.align == "LEFT" and 7 or 0, 0)
@@ -1711,8 +1724,6 @@ function GMH.UI:SaveNoteEditor()
 end
 
 function GMH.UI:CreateRow(member, rowIndex)
-    -- Обычный Frame вместо Button: это исключает влияние
-    -- стандартного состояния Button на отображение FontString.
     local row = CreateFrame("Frame", nil, self.content)
     row:SetWidth(726)
     row:SetHeight(32)
@@ -1724,7 +1735,8 @@ function GMH.UI:CreateRow(member, rowIndex)
     background:SetTexture(1, 1, 1, 1)
 
     local function ApplyRowColor()
-        if (rowIndex % 2) == 0 then
+        local index = row._visibleIndex or rowIndex or 1
+        if (index % 2) == 0 then
             background:SetVertexColor(COLORS.rowAlt[1], COLORS.rowAlt[2], COLORS.rowAlt[3], COLORS.rowAlt[4])
         else
             background:SetVertexColor(COLORS.row[1], COLORS.row[2], COLORS.row[3], COLORS.row[4])
@@ -1741,216 +1753,235 @@ function GMH.UI:CreateRow(member, rowIndex)
         ApplyRowColor()
     end)
 
-    ------------------------------------------------------------
-    -- Чекбокс
-    ------------------------------------------------------------
+    local canRemoveMembers = GMH.Permissions:Can("remove_member")
 
     local checkbox = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-
     checkbox:SetWidth(24)
     checkbox:SetHeight(24)
     checkbox:SetPoint("CENTER", row, "LEFT", 18, 0)
-
-    checkbox:SetChecked(member.selected and true or false)
-
+    checkbox:SetShown(canRemoveMembers)
+    checkbox:SetEnabled(canRemoveMembers)
     checkbox:SetScript("OnClick", function(self)
-        member.selected = self:GetChecked() and true or false
-        GMH.UI:UpdateSelectionCount()
+        if row.member and canRemoveMembers then
+            row.member.selected = self:GetChecked() and true or false
+            self:GetParent()._ui:UpdateSelectionCount()
+        end
     end)
 
-    ------------------------------------------------------------
-    -- Ячейки
-    ------------------------------------------------------------
+    local x = canRemoveMembers and 36 or 0
 
-    local x = 36
-
-    local function AddCell(text, width, justify, color, offset)
+    local function AddCell(width, justify, color, offset)
         local cell = CreateText(row, 10, color or COLORS.text, justify or "LEFT")
-
         cell:SetDrawLayer("OVERLAY")
         cell:SetPoint("LEFT", row, "LEFT", offset or x, 0)
-
         cell:SetWidth(width)
         cell:SetHeight(32)
         cell:SetJustifyV("MIDDLE")
         cell:SetWordWrap(false)
-        cell:SetText(tostring(text or ""))
-
         return cell
     end
 
-    local nameColor = member.isOnline and COLORS.text or COLORS.muted
-
-    local nameCell = AddCell(member.name, 140, "LEFT", nameColor, x + 7)
-
+    local nameCell = AddCell(140, "LEFT", COLORS.text, x + 7)
     x = x + 140
 
-    local levelColor = member.isOnline and COLORS.text or COLORS.muted
-
-    local levelCell = AddCell(tostring(member.level or ""), 50, "CENTER", levelColor, x)
-
+    local levelCell = AddCell(50, "CENTER", COLORS.text, x)
     x = x + 50
 
-    local rankCell
-    local rankOptions = self:GetRankOptionsForMember(member)
+    local rankButton = CreateFrame("Button", nil, row)
+    rankButton:SetWidth(110)
+    rankButton:SetHeight(32)
+    rankButton:SetPoint("LEFT", row, "LEFT", x, 0)
+    rankButton:SetFrameLevel(row:GetFrameLevel() + 1)
+    rankButton:EnableMouse(true)
 
-    if #rankOptions > 0 then
-        local rankButton = CreateFrame("Button", nil, row)
-        rankButton:SetWidth(110)
-        rankButton:SetHeight(32)
-        rankButton:SetPoint("LEFT", row, "LEFT", x, 0)
-        rankButton:EnableMouse(true)
+    local rankBg = rankButton:CreateTexture(nil, "BACKGROUND")
+    rankBg:SetAllPoints(rankButton)
+    rankBg:SetTexture(1, 1, 1, 1)
+    rankBg:SetVertexColor(1, 1, 1, 0.001)
 
-        local rankBg = rankButton:CreateTexture(nil, "BACKGROUND")
-        rankBg:SetAllPoints(rankButton)
-        rankBg:SetTexture(1, 1, 1, 1)
-        rankBg:SetVertexColor(1, 1, 1, 0.001)
+    local rankLabel = CreateText(rankButton, 10, COLORS.text, "LEFT")
+    rankLabel:SetPoint("LEFT", rankButton, "LEFT", 7, 0)
+    rankLabel:SetWidth(92)
+    rankLabel:SetHeight(32)
+    rankLabel:SetJustifyV("MIDDLE")
+    rankLabel:SetWordWrap(false)
 
-        local rankLabel = CreateText(rankButton, 10, COLORS.text, "LEFT")
-        rankLabel:SetPoint("LEFT", rankButton, "LEFT", 7, 0)
-        rankLabel:SetWidth(92)
-        rankLabel:SetHeight(32)
-        rankLabel:SetJustifyV("MIDDLE")
-        rankLabel:SetWordWrap(false)
-        rankLabel:SetText(member.rankName)
+    local arrow = CreateText(rankButton, 10, COLORS.muted, "CENTER")
+    arrow:SetPoint("RIGHT", rankButton, "RIGHT", -5, 0)
+    arrow:SetWidth(12)
+    arrow:SetHeight(32)
+    arrow:SetJustifyV("MIDDLE")
+    arrow:SetText("v")
 
-        -- В FRIZQT__.TTF символ "▼" на клиенте отображается как "?".
-        -- Используем совместимый ASCII-символ в виде небольшой стрелки.
-        local arrow = CreateText(rankButton, 10, COLORS.muted, "CENTER")
-        arrow:SetPoint("RIGHT", rankButton, "RIGHT", -5, 0)
-        arrow:SetWidth(12)
-        arrow:SetHeight(32)
-        arrow:SetJustifyV("MIDDLE")
-        arrow:SetText("v")
-
-        rankButton:SetScript("OnEnter", function()
+    rankButton:SetScript("OnEnter", function()
+        if rankButton:IsShown() then
             rankBg:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.10)
-        end)
+        end
+    end)
 
-        rankButton:SetScript("OnLeave", function()
-            rankBg:SetVertexColor(1, 1, 1, 0.001)
-        end)
+    rankButton:SetScript("OnLeave", function()
+        rankBg:SetVertexColor(1, 1, 1, 0.001)
+    end)
 
-        rankButton:SetScript("OnClick", function()
-            self:ShowRankMenu(rankButton, member)
-        end)
-
-        rankCell = rankButton
-    else
-        rankCell = AddCell(member.rankName, 110, "LEFT", COLORS.text, x + 7)
-    end
+    rankButton:SetScript("OnClick", function()
+        if row.member then
+            self:ShowRankMenu(rankButton, row.member)
+        end
+    end)
 
     x = x + 110
 
-    local publicCell
+    local publicButton = CreateFrame("Button", nil, row)
+    publicButton:SetPoint("LEFT", row, "LEFT", x, 0)
+    publicButton:SetWidth(135)
+    publicButton:SetHeight(32)
+    publicButton:SetFrameLevel(row:GetFrameLevel() + 1)
+    publicButton:EnableMouse(true)
 
-    if GMH.Permissions:Can("edit_public_note") then
-        local noteButton = CreateFrame("Button", nil, row)
-        noteButton:SetPoint("LEFT", row, "LEFT", x, 0)
-        noteButton:SetWidth(135)
-        noteButton:SetHeight(32)
-        noteButton:SetFrameLevel(row:GetFrameLevel() + 1)
-        noteButton:EnableMouse(true)
-
-        publicCell = AddCell(member.publicNote, 135, "LEFT", COLORS.muted, x + 7)
-
-        local publicEmpty = Trim(member.publicNote or "") == ""
-        if publicEmpty then
-            AddSubtleBorder(noteButton)
+    local publicCell = AddCell(135, "LEFT", COLORS.muted, x + 7)
+    publicButton:SetScript("OnEnter", function()
+        publicCell:SetTextColor(COLORS.text[1], COLORS.text[2], COLORS.text[3], 1)
+    end)
+    publicButton:SetScript("OnLeave", function()
+        publicCell:SetTextColor(COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], 1)
+    end)
+    publicButton:SetScript("OnClick", function()
+        if row.member then
+            self:ShowNoteEditor(row.member, "public")
         end
-
-        noteButton:SetScript("OnEnter", function()
-            publicCell:SetTextColor(COLORS.text[1], COLORS.text[2], COLORS.text[3], 1)
-            if publicEmpty and noteButton._noteBorder then
-                for _, border in ipairs(noteButton._noteBorder) do
-                    border:SetAlpha(0.28)
-                end
-            end
-        end)
-
-        noteButton:SetScript("OnLeave", function()
-            publicCell:SetTextColor(COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], 1)
-            if noteButton._noteBorder then
-                for _, border in ipairs(noteButton._noteBorder) do
-                    border:SetAlpha(publicEmpty and 0.16 or 0)
-                end
-            end
-        end)
-
-        noteButton:SetScript("OnClick", function()
-            self:ShowNoteEditor(member, "public")
-        end)
-    else
-        publicCell = AddCell(member.publicNote, 135, "LEFT", COLORS.muted, x + 7)
-    end
-
+    end)
     x = x + 135
 
-    local officerCell
+    local officerButton = CreateFrame("Button", nil, row)
+    officerButton:SetPoint("LEFT", row, "LEFT", x, 0)
+    officerButton:SetWidth(135)
+    officerButton:SetHeight(32)
+    officerButton:SetFrameLevel(row:GetFrameLevel() + 1)
+    officerButton:EnableMouse(true)
 
-    if self.columns.officerNote.button:IsShown() then
-        if GMH.Permissions:Can("edit_officer_note") then
-            local noteButton = CreateFrame("Button", nil, row)
-            noteButton:SetPoint("LEFT", row, "LEFT", x, 0)
-            noteButton:SetWidth(135)
-            noteButton:SetHeight(32)
-            noteButton:SetFrameLevel(row:GetFrameLevel() + 1)
-            noteButton:EnableMouse(true)
-
-            officerCell = AddCell(member.officerNote, 135, "LEFT", COLORS.muted, x + 7)
-
-            local officerEmpty = Trim(member.officerNote or "") == ""
-            if officerEmpty then
-                AddSubtleBorder(noteButton)
-            end
-
-            noteButton:SetScript("OnEnter", function()
-                officerCell:SetTextColor(COLORS.text[1], COLORS.text[2], COLORS.text[3], 1)
-                if officerEmpty and noteButton._noteBorder then
-                    for _, border in ipairs(noteButton._noteBorder) do
-                        border:SetAlpha(0.28)
-                    end
-                end
-            end)
-
-            noteButton:SetScript("OnLeave", function()
-                officerCell:SetTextColor(COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], 1)
-                if noteButton._noteBorder then
-                    for _, border in ipairs(noteButton._noteBorder) do
-                        border:SetAlpha(officerEmpty and 0.16 or 0)
-                    end
-                end
-            end)
-
-            noteButton:SetScript("OnClick", function()
-                self:ShowNoteEditor(member, "officer")
-            end)
-        else
-            officerCell = AddCell(member.officerNote, 135, "LEFT", COLORS.muted, x + 7)
+    local officerCell = AddCell(135, "LEFT", COLORS.muted, x + 7)
+    officerButton:SetScript("OnEnter", function()
+        officerCell:SetTextColor(COLORS.text[1], COLORS.text[2], COLORS.text[3], 1)
+    end)
+    officerButton:SetScript("OnLeave", function()
+        officerCell:SetTextColor(COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], 1)
+    end)
+    officerButton:SetScript("OnClick", function()
+        if row.member then
+            self:ShowNoteEditor(row.member, "officer")
         end
-    end
+    end)
+    x = x + 135
 
-    if self.columns.officerNote.button:IsShown() then
-        x = x + 135
-    end
-
-    local lastOnlineColor = member.isOnline and COLORS.allowed or COLORS.muted
-
-    local lastOnlineCell = AddCell(member.lastOnlineText, 120, "LEFT", lastOnlineColor, x + 7)
+    local lastOnlineCell = AddCell(120, "LEFT", COLORS.muted, x + 7)
 
     row.checkbox = checkbox
     row.member = member
     row.background = background
     row.nameCell = nameCell
     row.levelCell = levelCell
-    row.rankCell = rankCell
+    row.rankCell = rankButton
+    row.rankLabel = rankLabel
+    row.rankArrow = arrow
+    row.rankBg = rankBg
+    row.publicButton = publicButton
     row.publicCell = publicCell
+    row.officerButton = officerButton
     row.officerCell = officerCell
     row.lastOnlineCell = lastOnlineCell
-
-    self.rows[#self.rows + 1] = row
+    row._ui = self
 
     return row
+end
+
+function GMH.UI:UpdateRow(row, member, visibleIndex, absoluteIndex)
+    row.member = member
+    row._visibleIndex = visibleIndex
+    row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, -((absoluteIndex - 1) * 32))
+    row:Show()
+
+    local currentCanRemove = GMH.Permissions:Can("remove_member")
+    row.checkbox:SetShown(currentCanRemove)
+    row.checkbox:SetEnabled(currentCanRemove)
+    row.checkbox:SetChecked(currentCanRemove and member.selected and true or false)
+
+    local nameColor = member.isOnline and COLORS.text or COLORS.muted
+    row.nameCell:SetText(tostring(member.name or ""))
+    row.nameCell:SetTextColor(nameColor[1], nameColor[2], nameColor[3], 1)
+
+    row.levelCell:SetText(tostring(member.level or ""))
+    row.levelCell:SetTextColor(nameColor[1], nameColor[2], nameColor[3], 1)
+
+    row.rankLabel:SetText(tostring(member.rankName or ""))
+    local rankOptions = self:GetRankOptionsForMember(member)
+    local canChangeRank = #rankOptions > 0
+    row.rankCell:Show()
+    row.rankCell:EnableMouse(canChangeRank)
+    row.rankArrow:SetShown(canChangeRank)
+
+    if canChangeRank then
+        row.rankBg:SetVertexColor(1, 1, 1, 0.001)
+    else
+        row.rankBg:SetVertexColor(1, 1, 1, 0)
+    end
+
+    local canEditPublic = GMH.Permissions:Can("edit_public_note")
+    row.publicButton:SetShown(canEditPublic)
+    row.publicCell:SetText(tostring(member.publicNote or ""))
+
+    if canEditPublic and Trim(member.publicNote or "") == "" then
+        if not row.publicButton._noteBorder then
+            AddSubtleBorder(row.publicButton)
+        end
+        for _, border in ipairs(row.publicButton._noteBorder) do
+            border:SetAlpha(0.16)
+        end
+    elseif row.publicButton._noteBorder then
+        for _, border in ipairs(row.publicButton._noteBorder) do
+            border:SetAlpha(0)
+        end
+    end
+
+    local officerVisible = self.columns.officerNote.button:IsShown()
+    local canEditOfficer = GMH.Permissions:Can("edit_officer_note")
+    row.officerButton:SetShown(officerVisible and canEditOfficer)
+    row.officerCell:SetText(tostring(member.officerNote or ""))
+
+    if officerVisible and canEditOfficer and Trim(member.officerNote or "") == "" then
+        if not row.officerButton._noteBorder then
+            AddSubtleBorder(row.officerButton)
+        end
+        for _, border in ipairs(row.officerButton._noteBorder) do
+            border:SetAlpha(0.16)
+        end
+    elseif row.officerButton._noteBorder then
+        for _, border in ipairs(row.officerButton._noteBorder) do
+            border:SetAlpha(0)
+        end
+    end
+
+    row.lastOnlineCell:SetText(tostring(member.lastOnlineText or ""))
+    local lastColor = member.isOnline and COLORS.allowed or COLORS.muted
+    row.lastOnlineCell:SetTextColor(lastColor[1], lastColor[2], lastColor[3], 1)
+
+    local index = visibleIndex or 1
+    if (index % 2) == 0 then
+        row.background:SetVertexColor(COLORS.rowAlt[1], COLORS.rowAlt[2], COLORS.rowAlt[3], COLORS.rowAlt[4])
+    else
+        row.background:SetVertexColor(COLORS.row[1], COLORS.row[2], COLORS.row[3], COLORS.row[4])
+    end
+end
+
+function GMH.UI:EnsureRowPool()
+    self.rowPool = self.rowPool or {}
+    local needed = math.ceil(self.scroll:GetHeight() / 32) + 4
+    if needed < 20 then
+        needed = 20
+    end
+
+    while #self.rowPool < needed do
+        self.rowPool[#self.rowPool + 1] = self:CreateRow(nil, #self.rowPool + 1)
+    end
 end
 
 function GMH.UI:RefreshRoster()
@@ -1958,15 +1989,7 @@ function GMH.UI:RefreshRoster()
         return
     end
 
-    if self.rosterModeActive then
-        self:RefreshRosterCache()
-    end
-
-    for _, row in ipairs(self.rows or {}) do
-        row:Hide()
-    end
-
-    self.rows = {}
+    local oldScroll = self.scroll:GetVerticalScroll()
 
     local allMembers = self:GetRosterData()
     local visibleMembers = {}
@@ -1978,20 +2001,46 @@ function GMH.UI:RefreshRoster()
     end
 
     self:SortRoster(visibleMembers)
+    self.visibleRoster = visibleMembers
 
-    local rowY = 0
+    self:EnsureRowPool()
+    self.rows = self.rowPool
 
-    for index, member in ipairs(visibleMembers) do
-        local row = self:CreateRow(member, index)
-        row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, rowY)
-        rowY = rowY - 32
+    local contentHeight = math.max(#visibleMembers * 32 + 6, 1)
+    self.content:SetHeight(contentHeight)
+
+    local newRange = self.scroll:GetVerticalScrollRange()
+    if oldScroll > newRange then
+        oldScroll = newRange
     end
+    self.scroll:SetVerticalScroll(oldScroll)
 
-    self.content:SetHeight(math.max(math.abs(rowY) + 6, 1))
-    self.scroll:SetVerticalScroll(0)
-
+    self:RenderVisibleRows()
     self:UpdateScrollbar()
     self:UpdateSelectionCount()
+end
+
+function GMH.UI:RenderVisibleRows()
+    if not self.visibleRoster then
+        return
+    end
+
+    local total = #self.visibleRoster
+    local scroll = self.scroll:GetVerticalScroll()
+    local firstIndex = math.floor(scroll / 32) + 1
+    if firstIndex < 1 then
+        firstIndex = 1
+    end
+
+    for poolIndex, row in ipairs(self.rowPool or {}) do
+        local absoluteIndex = firstIndex + poolIndex - 1
+        if absoluteIndex <= total then
+            local member = self.visibleRoster[absoluteIndex]
+            self:UpdateRow(row, member, poolIndex, absoluteIndex)
+        else
+            row:Hide()
+        end
+    end
 end
 
 function GMH.UI:UpdateScrollbar()
@@ -2279,12 +2328,13 @@ function GMH.UI:UpdateSelectionCount()
     ------------------------------------------------------------
     local selectAll = self.columns and self.columns.selected and self.columns.selected.selectAll
 
+    local canRemove = GMH.Permissions:Can("remove_member")
+
     if selectAll then
-        selectAll:SetChecked(visible > 0 and visibleSelected == visible)
+        selectAll:SetChecked(canRemove and visible > 0 and visibleSelected == visible)
     end
 
     if self.removeButton then
-        local canRemove = GMH.Permissions:Can("remove_member")
         local hasSelection = selected > 0
 
         -- По умолчанию кнопка всегда скрыта.
@@ -2315,39 +2365,32 @@ function GMH.UI:ScheduleRosterRefresh()
     end
 
     self._rosterRefreshScheduled = true
-
-    local startedAt = GetTime()
     local elapsed = 0
 
     self._rosterRefreshFrame = self._rosterRefreshFrame or CreateFrame("Frame")
-
     self._rosterRefreshFrame:SetScript("OnUpdate", function(frame, delta)
         elapsed = elapsed + delta
 
-        if elapsed < 0.5 then
+        if elapsed < 1.0 then
             return
         end
 
-        if elapsed >= 2.0 then
-            frame:SetScript("OnUpdate", nil)
-            self._rosterRefreshScheduled = false
+        frame:SetScript("OnUpdate", nil)
+        self._rosterRefreshScheduled = false
 
-            if self.mainFrame then
-                GMH:RequestGuildRoster()
-                self:Refresh()
-            end
-        else
-            if self.mainFrame then
-                self:RefreshRoster()
-            end
+        if self.mainFrame then
+            GMH:RequestGuildRoster()
         end
     end)
 end
 
 function GMH.UI:OnGuildRosterUpdate()
-    if self.mainFrame then
-        self:Refresh()
+    if not self.mainFrame or not self.rosterModeActive then
+        return
     end
+
+    self:RefreshRosterCache()
+    self:RefreshRoster()
 end
 
 function GMH.UI:CreateToggleButton()

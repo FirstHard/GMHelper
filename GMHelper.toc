@@ -2,7 +2,7 @@
 ## Title: GMHelper - Помощник Гильдмастера
 ## Notes: Удобное управление гильдией
 ## Author: GMHelper Development
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: GMHelperDB, GMHelperDebugDB
 
 Core.lua
