@@ -1,0 +1,63 @@
+name: Release GMHelper
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read version from TOC
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep -E '^## Version:' GMHelper/GMHelper.toc | sed 's/^## Version:[[:space:]]*//')
+
+          if [ -z "$VERSION" ]; then
+            echo "Version was not found in GMHelper.toc"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      - name: Verify tag matches TOC version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TOC_VERSION="${{ steps.version.outputs.version }}"
+
+          if [ "$TAG_VERSION" != "$TOC_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match TOC version ($TOC_VERSION)."
+            exit 1
+          fi
+
+      - name: Create addon archive
+        shell: bash
+        run: |
+          mkdir -p dist
+
+          zip -r \
+            "dist/GMHelper-${{ steps.version.outputs.version }}.zip" \
+            GMHelper
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create \
+            "${GITHUB_REF_NAME}" \
+            "dist/GMHelper-${{ steps.version.outputs.version }}.zip" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "GMHelper ${{ steps.version.outputs.version }}" \
+            --generate-notes
