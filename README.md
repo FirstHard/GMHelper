@@ -183,7 +183,7 @@ GMHelper разработан для:
 - обсуждения возможных улучшений.
 
 **Репозиторий:**  
-`https://github.com/YOUR-USERNAME/GMHelper`
+`https://github.com/FirstHard/GMHelper`
 
 Перед созданием Issue желательно указать:
 

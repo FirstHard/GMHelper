@@ -183,7 +183,7 @@ Please use GitHub Issues for:
 - discussions about improvements.
 
 **Repository:**  
-`https://github.com/YOUR-USERNAME/GMHelper`
+`https://github.com/FirstHard/GMHelper`
 
 When reporting a problem, please include:
 
