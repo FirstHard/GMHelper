@@ -3,7 +3,7 @@ name: Release GMHelper
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
 
 permissions:
   contents: write
@@ -15,66 +15,106 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v5.1.0
 
-      - name: Find addon TOC and read version
+      - name: Read addon version
         id: version
         shell: bash
         run: |
-            TOC_FILE=$(find . -type f -name "GMHelper.toc" | head -n 1)
+          set -euo pipefail
 
-            if [ -z "$TOC_FILE" ]; then
-            echo "GMHelper.toc was not found"
-            echo "Repository structure:"
+          TOC_FILE="GMHelper.toc"
+
+          if [[ ! -f "$TOC_FILE" ]]; then
+            echo "GMHelper.toc was not found at repository root: $TOC_FILE"
+            echo "Repository files:"
             find . -maxdepth 3 -type f | sort
             exit 1
-            fi
+          fi
 
-            echo "Found TOC: $TOC_FILE"
+          VERSION="$(sed -nE 's/^## Version:[[:space:]]*(.+)$/\1/p' "$TOC_FILE" | head -n 1)"
 
-            VERSION=$(grep -E '^## Version:' "$TOC_FILE" | sed 's/^## Version:[[:space:]]*//')
-
-            if [ -z "$VERSION" ]; then
+          if [[ -z "$VERSION" ]]; then
             echo "Version was not found in $TOC_FILE"
             exit 1
-            fi
+          fi
 
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "toc_file=$TOC_FILE" >> "$GITHUB_OUTPUT"
-            echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
 
       - name: Verify tag matches TOC version
         shell: bash
         run: |
+          set -euo pipefail
+
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           TOC_VERSION="${{ steps.version.outputs.version }}"
 
-          if [ "$TAG_VERSION" != "$TOC_VERSION" ]; then
+          if [[ "$TAG_VERSION" != "$TOC_VERSION" ]]; then
             echo "Tag version ($TAG_VERSION) does not match TOC version ($TOC_VERSION)."
             exit 1
           fi
 
-      - name: Create addon archive
+      - name: Build addon archive
         shell: bash
         run: |
-            mkdir -p dist
+          set -euo pipefail
 
-            TOC_FILE="${{ steps.version.outputs.toc_file }}"
-            ADDON_DIR=$(dirname "$TOC_FILE")
+          mkdir -p dist/GMHelper
 
-            echo "Addon directory: $ADDON_DIR"
+          cp \
+            GMHelper.toc \
+            Core.lua \
+            Permissions.lua \
+            Debug.lua \
+            UI.lua \
+            dist/GMHelper/
 
-            zip -r \
-            "dist/GMHelper-${{ steps.version.outputs.version }}.zip" \
-            "$ADDON_DIR"
-      
-      - name: Create GitHub Release
+          cd dist
+          zip -r "GMHelper-${{ steps.version.outputs.version }}.zip" GMHelper
+
+          echo "Created archive: dist/GMHelper-${{ steps.version.outputs.version }}.zip"
+          unzip -l "GMHelper-${{ steps.version.outputs.version }}.zip"
+
+      - name: Create GitHub Release and upload archive
+        uses: actions/github-script@v9
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create \
-            "${GITHUB_REF_NAME}" \
-            "dist/GMHelper-${{ steps.version.outputs.version }}.zip" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "GMHelper ${{ steps.version.outputs.version }}" \
-            --generate-notes
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          ARCHIVE_PATH: dist/GMHelper-${{ steps.version.outputs.version }}.zip
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const tag = process.env.RELEASE_TAG;
+            const version = process.env.RELEASE_VERSION;
+            const archivePath = process.env.ARCHIVE_PATH;
+
+            const { owner, repo } = context.repo;
+
+            const release = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              name: `GMHelper ${version}`,
+              generate_release_notes: true,
+              draft: false,
+              prerelease: false,
+            });
+
+            const archive = fs.readFileSync(archivePath);
+
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: release.data.id,
+              name: `GMHelper-${version}.zip`,
+              data: archive,
+              headers: {
+                'content-type': 'application/zip',
+                'content-length': archive.length,
+              },
+            });
+
+            core.info(`Release ${tag} created: ${release.data.html_url}`);
