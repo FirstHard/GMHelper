@@ -1,0 +1,11 @@
+## Interface: 30300
+## Title: GMHelper - Помощник Гильдмастера
+## Notes: Удобное управление гильдией
+## Author: GMHelper Development
+## Version: 1.0.0
+## SavedVariables: GMHelperDB, GMHelperDebugDB
+
+Core.lua
+Permissions.lua
+Debug.lua
+UI.lua
