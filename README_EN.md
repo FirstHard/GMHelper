@@ -121,7 +121,7 @@ Before the operation starts, GMHelper displays a confirmation dialog containing 
 
 ## Installation
 
-1. Download the latest GMHelper release.
+1. Download the [latest GMHelper release](https://github.com/YOUR-USERNAME/GMHelper/releases/latest).
 2. Extract the archive.
 3. Place the `GMHelper` folder into:
 
@@ -203,11 +203,9 @@ GMHelper is free to use.
 
 If you find the addon useful and would like to support its development, you can make a voluntary donation through one of the services below:
 
-- **DonationAlerts:** `https://dalink.to/phoenixnest`
-- **Buy Me a Coffee:** `https://buymeacoffee.com/TekhnoKhobbIT`
-- **Donatello:** `https://donatello.to/TekhnoKhobbIT`
-
-> Replace the links above with your real donation pages before publishing the README.
+- **DonationAlerts:** [dalink.to/phoenixnest](https://dalink.to/phoenixnest)
+- **Buy Me a Coffee:** [buymeacoffee.com/TekhnoKhobbIT](https://buymeacoffee.com/TekhnoKhobbIT)
+- **Donatello:** [donatello.to/TekhnoKhobbIT](https://donatello.to/TekhnoKhobbIT)
 
 Donations are completely voluntary and do not provide additional in-game features or advantages.
 

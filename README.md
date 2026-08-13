@@ -121,7 +121,7 @@
 
 ## Установка
 
-1. Скачайте последнюю версию GMHelper.
+1. Скачайте [последнюю версию GMHelper](https://github.com/YOUR-USERNAME/GMHelper/releases/latest).
 2. Распакуйте архив.
 3. Поместите папку `GMHelper` в:
 
@@ -203,9 +203,9 @@ GMHelper распространяется бесплатно.
 
 Если аддон оказался полезным и вы хотите поддержать его дальнейшую разработку, вы можете сделать добровольное пожертвование через один из сервисов ниже:
 
-- **DonationAlerts:** `https://dalink.to/phoenixnest`
-- **Buy Me a Coffee:** `https://buymeacoffee.com/TekhnoKhobbIT`
-- **Donatello:** `https://donatello.to/TekhnoKhobbIT`
+- **DonationAlerts:** [dalink.to/phoenixnest](https://dalink.to/phoenixnest)
+- **Buy Me a Coffee:** [buymeacoffee.com/TekhnoKhobbIT](https://buymeacoffee.com/TekhnoKhobbIT)
+- **Donatello:** [donatello.to/TekhnoKhobbIT](https://donatello.to/TekhnoKhobbIT)
 
 Пожертвование полностью добровольное и не предоставляет дополнительных игровых функций или преимуществ.
 

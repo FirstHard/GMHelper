@@ -434,7 +434,7 @@ function GMH.UI:CreateMainFrame()
             self:RefreshRoster()
         end)
     end
-
+    
     CreateUnitOption("Месяцы", "months", 0)
     CreateUnitOption("Дни", "days", -27)
 
