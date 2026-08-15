@@ -702,9 +702,29 @@ function GMH.UI:CreateMainFrame()
 
     -- (Stop button moved into confirmation modal.)
 
+    ------------------------------------------------------------
+    -- Строка состояния между фильтрами и таблицей
+    ------------------------------------------------------------
+
+    local statusBar = CreateFrame("Frame", nil, frame)
+    statusBar:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -88)
+    statusBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -88)
+    statusBar:SetHeight(28)
+    SetSolidBackground(statusBar, COLORS.toolbar)
+
+    self.statusBar = statusBar
+
+    local statusLabel = CreateText(statusBar, 10, COLORS.muted, "LEFT")
+    statusLabel:SetPoint("LEFT", statusBar, "LEFT", 10, 0)
+    statusLabel:SetPoint("RIGHT", statusBar, "RIGHT", -10, 0)
+    statusLabel:SetJustifyH("LEFT")
+    statusLabel:SetText("Всего: 0    Показано: 0    Выбрано: 0")
+
+    self.selectionLabel = statusLabel
+
     local tableHeader = CreateFrame("Frame", nil, frame)
-    tableHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -88)
-    tableHeader:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -88)
+    tableHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -116)
+    tableHeader:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -116)
     tableHeader:SetHeight(30)
     SetSolidBackground(tableHeader, COLORS.header)
 
@@ -715,7 +735,7 @@ function GMH.UI:CreateMainFrame()
     ------------------------------------------------------------
 
     local scroll = CreateFrame("ScrollFrame", "GMHelperRosterScroll", frame)
-    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -118)
+    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -146)
     scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, 16)
     scroll:EnableMouseWheel(true)
 
@@ -768,7 +788,7 @@ function GMH.UI:CreateMainFrame()
 
     local scrollbar = CreateFrame("Frame", nil, frame)
     scrollbar:SetWidth(8)
-    scrollbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -118)
+    scrollbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -146)
     scrollbar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 16)
     scrollbar:Hide()
 
@@ -944,44 +964,54 @@ function GMH.UI:CreateColumns()
         self.columns[column.key] = column
 
         if column.key == "selected" then
-            if canRemoveMembers then
-                local selectAll = CreateFrame("CheckButton", nil, button, "UICheckButtonTemplate")
-                selectAll:SetWidth(24)
-                selectAll:SetHeight(24)
-                selectAll:SetPoint("CENTER", button, "CENTER", 0, 0)
-                selectAll:EnableMouse(true)
-                selectAll:RegisterForClicks("LeftButtonUp")
-                selectAll:SetHitRectInsets(0, 0, 0, 0)
+            -- Чекбокс заголовка создаём всегда. Его видимость и доступность
+            -- обновляются в UpdateColumns(), поэтому смена персонажа/прав
+            -- не зависит от того, с каким персонажем UI был создан.
+            local selectAll = CreateFrame("CheckButton", nil, button, "UICheckButtonTemplate")
+            selectAll:SetWidth(24)
+            selectAll:SetHeight(24)
+            selectAll:SetPoint("CENTER", button, "CENTER", 0, 0)
+            selectAll:EnableMouse(true)
+            selectAll:RegisterForClicks("LeftButtonUp")
+            selectAll:SetHitRectInsets(0, 0, 0, 0)
+            selectAll:SetShown(canRemoveMembers)
+            selectAll:SetEnabled(canRemoveMembers)
 
-                selectAll:SetScript("OnClick", function(self)
-                    local members = GMH.UI:GetRosterData()
-                    local visible = {}
+            selectAll:SetScript("OnClick", function(self)
+                if not GMH.Permissions:Can("remove_member") then
+                    self:SetChecked(false)
+                    return
+                end
 
-                    for _, member in ipairs(members) do
-                        if GMH.UI:MatchesFilter(member) then
-                            visible[#visible + 1] = member
-                        end
+                local members = GMH.UI:GetRosterData()
+                local visible = {}
+
+                for _, member in ipairs(members) do
+                    if GMH.UI:MatchesFilter(member) then
+                        visible[#visible + 1] = member
                     end
+                end
 
-                    local selectState = self:GetChecked() and true or false
-                    for _, member in ipairs(visible) do
-                        member.selected = selectState
-                    end
+                local selectState = self:GetChecked() and true or false
+                for _, member in ipairs(visible) do
+                    member.selected = selectState
+                end
 
-                    GMH.UI:RefreshRoster()
-                end)
+                GMH.UI:RefreshRoster()
+            end)
 
-                column.selectAll = selectAll
-                column.labelObject = nil
+            column.selectAll = selectAll
+            column.labelObject = nil
 
-                button:SetScript("OnClick", function()
-                    selectAll:SetChecked(not selectAll:GetChecked())
-                    selectAll:Click()
-                end)
-            else
-                column.selectAll = nil
-                column.labelObject = nil
-            end
+            button:SetScript("OnClick", function()
+                if not GMH.Permissions:Can("remove_member") then
+                    selectAll:SetChecked(false)
+                    return
+                end
+
+                selectAll:SetChecked(not selectAll:GetChecked())
+                selectAll:Click()
+            end)
         else
             local label = CreateText(button, 12, COLORS.muted, column.align)
             label:SetPoint("LEFT", button, "LEFT", column.align == "LEFT" and 7 or 0, 0)
@@ -1033,6 +1063,17 @@ function GMH.UI:UpdateColumns()
             col.button:SetWidth(col.width)
         end
         x = x + (col.width or 0)
+    end
+
+    -- Чекбокс "выбрать всех" должен появляться и после смены персонажа,
+    -- даже если UI был создан персонажем без права remove_member.
+    if self.columns and self.columns.selected and self.columns.selected.selectAll then
+        local selectAll = self.columns.selected.selectAll
+        selectAll:SetShown(canRemoveMembers)
+        selectAll:SetEnabled(canRemoveMembers)
+        if not canRemoveMembers then
+            selectAll:SetChecked(false)
+        end
     end
 
     -- Update existing rows to match new layout (checkbox visibility and cell positions)
@@ -1289,6 +1330,47 @@ function GMH.UI:SortRoster(members)
     local ascending = GMHelperDB.roster.sortAscending ~= false
 
     table.sort(members, function(a, b)
+        -- "Последний онлайн" сортируется естественно по времени отсутствия:
+        -- онлайн = -1 час (условный минимальный ключ),
+        -- остальные = фактическое количество часов отсутствия.
+        -- Поэтому при возрастании онлайн идут первыми,
+        -- а при убывании — последними.
+        if column == "offlineHours" then
+            local function LastOnlineKey(member)
+                if member.isOnline then
+                    return -1
+                end
+
+                local hours = tonumber(member.offlineHours)
+
+                if hours ~= nil then
+                    return hours
+                end
+
+                -- Нет данных: отправляем в конец сортировки по времени.
+                return math.huge
+            end
+
+            local keyA = LastOnlineKey(a)
+            local keyB = LastOnlineKey(b)
+
+            if keyA ~= keyB then
+                if ascending then
+                    return keyA < keyB
+                end
+                return keyA > keyB
+            end
+
+            local nameA = Lower(a.name)
+            local nameB = Lower(b.name)
+
+            if nameA ~= nameB then
+                return nameA < nameB
+            end
+
+            return a.rosterIndex < b.rosterIndex
+        end
+
         local va
         local vb
 
@@ -2354,9 +2436,13 @@ function GMH.UI:CreateRow(member, rowIndex)
     checkbox:SetShown(canRemoveMembers)
     checkbox:SetEnabled(canRemoveMembers)
     checkbox:SetScript("OnClick", function(self)
-        if row.member and canRemoveMembers then
+        -- Не замыкаем первоначальное значение права: оно может измениться
+        -- после входа другим персонажем без пересоздания UI.
+        if row.member and GMH.Permissions:Can("remove_member") then
             row.member.selected = self:GetChecked() and true or false
             self:GetParent()._ui:UpdateSelectionCount()
+        else
+            self:SetChecked(false)
         end
     end)
 
@@ -2700,8 +2786,12 @@ end
 function GMH.UI:GetSelectedMembers()
     local selected = {}
 
+    -- Для действий учитываем только отмеченных персонажей,
+    -- которые входят в текущую выборку по фильтру.
+    -- Это не позволяет скрытым после фильтрации персонажам
+    -- продолжать участвовать в массовых операциях.
     for _, member in ipairs(self.rosterCache or {}) do
-        if member.selected then
+        if member.selected and self:MatchesFilter(member) then
             selected[#selected + 1] = member
         end
     end
@@ -2898,27 +2988,31 @@ function GMH.UI:ProcessRemovalQueue()
 end
 
 function GMH.UI:UpdateSelectionCount()
-    local selected = 0
     local visible = 0
     local visibleSelected = 0
 
     local members = self:GetRosterData() or {}
 
     for _, member in ipairs(members) do
-        if member.selected then
-            selected = selected + 1
-        end
-
         if self:MatchesFilter(member) then
             visible = visible + 1
+
             if member.selected then
                 visibleSelected = visibleSelected + 1
             end
         end
     end
 
+    -- В интерфейсе показываем именно выборку текущего фильтра.
+    -- Скрытые фильтром отметки не считаются выбранными для действий.
+    local selected = visibleSelected
+
     if self.selectionLabel then
-        self.selectionLabel:SetText("Выбрано: " .. tostring(selected) .. " (в списке: " .. tostring(visible) .. ")")
+        self.selectionLabel:SetText(
+            "Всего: " .. tostring(#members)
+            .. "    Показано: " .. tostring(visible)
+            .. "    Выбрано: " .. tostring(selected)
+        )
     end
 
     ------------------------------------------------------------
