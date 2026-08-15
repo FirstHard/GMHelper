@@ -1,8 +1,8 @@
 local ADDON_NAME, GMH = ...
 
 GMH.NAME = "GMHelper - Помощник Гильдмастера"
-GMH.VERSION = "1.0.1"
-GMH.DB_VERSION = 3
+GMH.VERSION = "1.1.4"
+GMH.DB_VERSION = 4
 
 GMHelperDB = GMHelperDB or {}
 GMHelperDebugDB = GMHelperDebugDB or {}
@@ -20,6 +20,7 @@ local function RegisterSpecialFrame(frameName)
 end
 
 RegisterSpecialFrame("GMHelperMainFrame")
+RegisterSpecialFrame("GMHelperSettingsFrame")
 
 local function InitDB()
     GMHelperDB.version = GMH.DB_VERSION
@@ -35,8 +36,11 @@ local function InitDB()
         point = "CENTER",
         relativePoint = "CENTER",
         x = 220,
-        y = -120
+        y = -120,
+        mode = "free"
     }
+
+    GMHelperDB.button.mode = GMHelperDB.button.mode or "free"
 
     GMHelperDB.roster = GMHelperDB.roster or {
         sortColumn = "name",
@@ -109,8 +113,13 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         -- Сначала запрашиваем его, затем обновляем UI.
         GMH:RequestGuildRoster()
 
-        if GMH.UI and GMH.UI.Refresh then
-            GMH.UI:Refresh()
+        if GMH.UI then
+            if GMH.UI.UpdateColumns then
+                GMH.UI:UpdateColumns()
+            end
+            if GMH.UI.Refresh then
+                GMH.UI:Refresh()
+            end
         end
 
         -- Дополнительное обновление через небольшую задержку,

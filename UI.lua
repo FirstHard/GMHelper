@@ -100,24 +100,141 @@ local function EnableMoving(frame, dragButton)
     end)
 end
 
+local function GetMinimapButtonRadius()
+    if Minimap and Minimap.GetWidth then
+        return 80 * (Minimap:GetWidth() / 150)
+    end
+    return 80
+end
+
+local function NormalizeAngle(angle)
+    while angle > math.pi do
+        angle = angle - (2 * math.pi)
+    end
+    while angle < -math.pi do
+        angle = angle + (2 * math.pi)
+    end
+    return angle
+end
+
+local function PositionButtonOnMinimap(button, angle)
+    if not button or not Minimap then
+        return
+    end
+
+    angle = NormalizeAngle(tonumber(angle) or math.rad(45))
+    local scale = Minimap:GetWidth() / 150
+    local radius = 80 * scale
+    local x = math.cos(angle) * radius
+    local y = math.sin(angle) * radius
+
+    button:ClearAllPoints()
+    button:SetPoint("CENTER", Minimap, "CENTER", x, y)
+
+    GMHelperDB.button.angle = angle
+    GMHelperDB.button.radius = radius
+end
+
+local function GetCursorUIPosition()
+    local scale = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    return x / scale, y / scale
+end
+
+local function UpdateToggleButtonVisualState(button)
+    if not button then
+        return
+    end
+
+    local mode = GMHelperDB.button.mode or "free"
+    if mode == "minimap" then
+        button:SetSize(32, 32)
+        if Minimap then
+            button:SetFrameStrata("MEDIUM")
+            button:SetFrameLevel(Minimap:GetFrameLevel() + 10)
+        end
+        if button.icon then
+            button.icon:SetSize(22, 22)
+            button.icon:SetPoint("CENTER", button, "CENTER", 0, 0)
+            pcall(function() button.icon:SetTexCoord(0.10, 0.90, 0.10, 0.90) end)
+        end
+        if button._minimapBorder then
+            button._minimapBorder:SetSize(56, 56)
+            button._minimapBorder:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+            button._minimapBorder:Show()
+        end
+    else
+        button:SetSize(48, 48)
+        button:SetFrameStrata("MEDIUM")
+        button:SetFrameLevel(100)
+        if button.icon then
+            button.icon:SetSize(42, 42)
+            button.icon:SetPoint("CENTER", button, "CENTER", 0, 0)
+            pcall(function() button.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) end)
+        end
+        if button._minimapBorder then
+            button._minimapBorder:Hide()
+        end
+    end
+end
+
 local function EnableMovingButton(button)
     button:SetMovable(true)
     button:EnableMouse(true)
-    button:RegisterForDrag("RightButton")
 
-    button:SetScript("OnDragStart", function(self)
-        self:StartMoving()
-    end)
+    if GMHelperDB.button.mode == "minimap" then
+        button:RegisterForDrag("LeftButton")
+        button:SetScript("OnDragStart", function(self)
+            self:SetScript("OnUpdate", function()
+                local mx, my = Minimap:GetCenter()
+                local px, py = GetCursorPosition()
+                local scale = UIParent:GetEffectiveScale()
+                px, py = px / scale, py / scale
 
-    button:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
+                GMHelperDB.button.angle = math.atan2(py - my, px - mx)
+                PositionButtonOnMinimap(self, GMHelperDB.button.angle)
+            end)
+        end)
 
-        local point, _, relativePoint, x, y = self:GetPoint()
-        GMHelperDB.button.point = point
-        GMHelperDB.button.relativePoint = relativePoint
-        GMHelperDB.button.x = x
-        GMHelperDB.button.y = y
-    end)
+        button:SetScript("OnDragStop", function(self)
+            self:SetScript("OnUpdate", nil)
+        end)
+
+        button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        button:SetScript("OnClick", function(self, mouseButton)
+            if mouseButton == "RightButton" then
+                GMH.UI:ToggleSettings()
+            elseif mouseButton == "LeftButton" then
+                GMH.UI:Toggle()
+            end
+        end)
+    else
+        button:RegisterForDrag("LeftButton")
+        button:SetScript("OnDragStart", function(self)
+            self:StartMoving()
+        end)
+
+        button:SetScript("OnDragStop", function(self)
+            self:StopMovingOrSizing()
+
+            local point, _, relativePoint, offsetX, offsetY = self:GetPoint()
+            if point and relativePoint then
+                GMHelperDB.button.freePoint = point
+                GMHelperDB.button.freeRelativePoint = relativePoint
+                GMHelperDB.button.freeX = offsetX
+                GMHelperDB.button.freeY = offsetY
+            end
+        end)
+
+        button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        button:SetScript("OnClick", function(self, mouseButton)
+            if mouseButton == "RightButton" then
+                GMH.UI:ToggleSettings()
+            elseif mouseButton == "LeftButton" then
+                GMH.UI:Toggle()
+            end
+        end)
+    end
 end
 
 local function ApplySavedPosition(frame, data, defaultPoint, defaultRelativePoint, defaultX, defaultY)
@@ -348,7 +465,7 @@ function GMH.UI:CreateMainFrame()
     toolbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -46)
     toolbar:SetHeight(42)
     SetSolidBackground(toolbar, COLORS.toolbar)
-
+    
     self.toolbar = toolbar
 
     -- Панель фильтров: одна строка.
@@ -397,6 +514,27 @@ function GMH.UI:CreateMainFrame()
     self.minOfflineUnitBackground = unitBg
     self.minOfflineUnitLabel = unitLabel
 
+    -- Create a small invisible EditBox to act as keyboard-focus proxy for the unit button.
+    local unitProxy = CreateFrame("EditBox", nil, toolbar)
+    unitProxy:SetWidth(1)
+    unitProxy:SetHeight(1)
+    unitProxy:SetAutoFocus(false)
+    unitProxy:SetScript("OnEditFocusGained", function()
+        unitButton:LockHighlight()
+    end)
+    unitProxy:SetScript("OnEditFocusLost", function()
+        unitButton:UnlockHighlight()
+    end)
+    unitProxy:SetScript("OnEnterPressed", function(self)
+        unitButton:Click()
+        self:ClearFocus()
+    end)
+    unitProxy:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+
+    self.minOfflineUnitProxy = unitProxy
+
     local unitMenu = CreateFrame("Frame", nil, toolbar)
     unitMenu:SetWidth(82)
     unitMenu:SetHeight(54)
@@ -432,6 +570,51 @@ function GMH.UI:CreateMainFrame()
             unitMenu:Hide()
             self:UpdateOfflineFilterUnit()
             self:RefreshRoster()
+            -- return focus to the unit proxy so keyboard users keep context
+            if self.minOfflineUnitProxy then
+                self.minOfflineUnitProxy:SetFocus()
+            end
+        end)
+    end
+
+    -- Tab navigation between level/offline inputs and the unit button proxy.
+    -- Order: minLevel -> maxLevel -> minOfflineValue -> unitProxy -> minLevel
+    if self.minLevelBox and self.maxLevelBox and self.minOfflineValueBox and self.minOfflineUnitProxy then
+        local minBox = self.minLevelBox
+        local maxBox = self.maxLevelBox
+        local offBox = self.minOfflineValueBox
+        local proxy = self.minOfflineUnitProxy
+
+        minBox:SetScript("OnTabPressed", function(self)
+            if IsShiftKeyDown() then
+                proxy:SetFocus()
+            else
+                maxBox:SetFocus()
+            end
+        end)
+
+        maxBox:SetScript("OnTabPressed", function(self)
+            if IsShiftKeyDown() then
+                minBox:SetFocus()
+            else
+                offBox:SetFocus()
+            end
+        end)
+
+        offBox:SetScript("OnTabPressed", function(self)
+            if IsShiftKeyDown() then
+                maxBox:SetFocus()
+            else
+                proxy:SetFocus()
+            end
+        end)
+
+        proxy:SetScript("OnTabPressed", function(self)
+            if IsShiftKeyDown() then
+                offBox:SetFocus()
+            else
+                minBox:SetFocus()
+            end
         end)
     end
     
@@ -485,6 +668,13 @@ function GMH.UI:CreateMainFrame()
 
         self:UpdateOfflineFilterUnit()
         self:UpdateOnlineButton()
+        -- Clear all selections (uncheck all checkboxes)
+        local members = self:GetRosterData() or {}
+        for _, member in ipairs(members) do
+            member.selected = nil
+        end
+
+        self:UpdateSelectionCount()
         self:RefreshRoster()
     end)
 
@@ -498,16 +688,19 @@ function GMH.UI:CreateMainFrame()
     -- При создании всегда скрыта; показывается только после выбора.
     ------------------------------------------------------------
 
-    local removeButton = CreateButton(toolbar, 190, 30, "Исключить выбранных")
-    removeButton:SetPoint("LEFT", resetButton, "RIGHT", 8, 0)
-    removeButton:Hide()
-    removeButton:Enable(false)
+    -- Кнопка действий для массовых операций (показывается при наличии выбора).
+    local actionButton = CreateButton(toolbar, 140, 30, "Действия")
+    actionButton:SetPoint("LEFT", resetButton, "RIGHT", 8, 0)
+    actionButton:Hide()
+    actionButton:Enable(false)
 
-    removeButton:SetScript("OnClick", function()
-        self:ShowRemoveConfirmation()
+    actionButton:SetScript("OnClick", function()
+        self:ShowBulkActionMenu(actionButton)
     end)
 
-    self.removeButton = removeButton
+    self.actionButton = actionButton
+
+    -- (Stop button moved into confirmation modal.)
 
     local tableHeader = CreateFrame("Frame", nil, frame)
     tableHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -88)
@@ -790,7 +983,7 @@ function GMH.UI:CreateColumns()
                 column.labelObject = nil
             end
         else
-            local label = CreateText(button, 10, COLORS.muted, column.align)
+            local label = CreateText(button, 12, COLORS.muted, column.align)
             label:SetPoint("LEFT", button, "LEFT", column.align == "LEFT" and 7 or 0, 0)
             label:SetPoint("RIGHT", button, "RIGHT", column.align == "LEFT" and -5 or 0, 0)
             label:SetText(column.label)
@@ -809,6 +1002,7 @@ end
 function GMH.UI:UpdateColumns()
     local canViewOfficerNote = GMH.Permissions:Can("view_officer_note")
     local canEditOfficerNote = GMH.Permissions:Can("edit_officer_note")
+    local canRemoveMembers = GMH.Permissions:Can("remove_member")
 
     local officerColumn = self.columns.officerNote
 
@@ -816,6 +1010,84 @@ function GMH.UI:UpdateColumns()
         officerColumn.button:SetShown(canViewOfficerNote)
         officerColumn.labelObject:SetText(canEditOfficerNote and "Офицерская заметка" or
                                               "Офицерская заметка")
+    end
+
+    -- Recompute selected column width and relayout header buttons
+    local selectionWidth = canRemoveMembers and 36 or 0
+
+    -- Update columnDefinitions width for selected column if present
+    if self.columnDefinitions then
+        for _, col in ipairs(self.columnDefinitions) do
+            if col.key == "selected" then
+                col.width = selectionWidth
+            end
+        end
+    end
+
+    -- Reposition header buttons according to new widths
+    local x = 0
+    for _, col in ipairs(self.columnDefinitions or {}) do
+        if col.button then
+            col.button:ClearAllPoints()
+            col.button:SetPoint("TOPLEFT", self.tableHeader, "TOPLEFT", x, 0)
+            col.button:SetWidth(col.width)
+        end
+        x = x + (col.width or 0)
+    end
+
+    -- Update existing rows to match new layout (checkbox visibility and cell positions)
+    for _, row in ipairs(self.rowPool or {}) do
+        if row then
+            local x = selectionWidth
+            row.checkbox:SetShown(canRemoveMembers)
+            row.checkbox:SetEnabled(canRemoveMembers)
+            -- checkbox anchor remains at 18 when shown
+            row.checkbox:ClearAllPoints()
+            row.checkbox:SetPoint("CENTER", row, "LEFT", 18, 0)
+
+            if row.nameCell then
+                row.nameCell:ClearAllPoints()
+                row.nameCell:SetPoint("LEFT", row, "LEFT", x + 7, 0)
+            end
+            x = x + 140
+
+            if row.levelCell then
+                row.levelCell:ClearAllPoints()
+                row.levelCell:SetPoint("LEFT", row, "LEFT", x, 0)
+            end
+            x = x + 50
+
+            if row.rankCell then
+                row.rankCell:ClearAllPoints()
+                row.rankCell:SetPoint("LEFT", row, "LEFT", x, 0)
+            end
+            x = x + 110
+
+            if row.publicButton then
+                row.publicButton:ClearAllPoints()
+                row.publicButton:SetPoint("LEFT", row, "LEFT", x, 0)
+            end
+            if row.publicCell then
+                row.publicCell:ClearAllPoints()
+                row.publicCell:SetPoint("LEFT", row, "LEFT", x + 7, 0)
+            end
+            x = x + 135
+
+            if row.officerButton then
+                row.officerButton:ClearAllPoints()
+                row.officerButton:SetPoint("LEFT", row, "LEFT", x, 0)
+            end
+            if row.officerCell then
+                row.officerCell:ClearAllPoints()
+                row.officerCell:SetPoint("LEFT", row, "LEFT", x + 7, 0)
+            end
+            x = x + 135
+
+            if row.lastOnlineCell then
+                row.lastOnlineCell:ClearAllPoints()
+                row.lastOnlineCell:SetPoint("LEFT", row, "LEFT", x + 7, 0)
+            end
+        end
     end
 end
 
@@ -1184,9 +1456,8 @@ function GMH.UI:GetRankChangeTargets(clickedMember, targetRankIndex)
     local selected = self:GetSelectedMembers()
     local targets = {}
 
-    -- Если кликнули по выбранному персонажу и выбрано несколько,
-    -- применяем новое звание ко всей выборке.
-    if clickedMember and clickedMember.selected and #selected > 1 then
+    -- Если есть выделенные персонажи, применяем новое звание ко всей выборке.
+    if #selected > 0 then
         for _, member in ipairs(selected) do
             if self:CanSetMemberRank(member, targetRankIndex) then
                 targets[#targets + 1] = member
@@ -1333,10 +1604,20 @@ function GMH.UI:CreateRankConfirmationFrame()
 
     local frame = CreateFrame("Frame", "GMHelperRankConfirmFrame", self.mainFrame)
     frame:SetWidth(520)
-    frame:SetHeight(220)
-    frame:SetFrameStrata("TOOLTIP")
+    frame:SetHeight(280)
+    -- Keep the modal beneath the dropdown so the list remains on top.
+    frame:SetFrameStrata("DIALOG")
     frame:SetFrameLevel(self.mainFrame:GetFrameLevel() + 20)
     frame:Hide()
+
+    frame:SetScript("OnHide", function()
+        if self.rankConfirmDropdown and self.rankConfirmDropdown.menu then
+            self.rankConfirmDropdown.menu:Hide()
+        end
+        if self.rankConfirmYesButton then
+            self.rankConfirmYesButton:Enable(true)
+        end
+    end)
 
     SetSolidBackground(frame, {0.02, 0.025, 0.035, 0.98})
 
@@ -1349,7 +1630,7 @@ function GMH.UI:CreateRankConfirmationFrame()
     local message = CreateText(frame, 12, COLORS.text, "CENTER")
     message:SetPoint("TOPLEFT", frame, "TOPLEFT", 28, -50)
     message:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -28, -50)
-    message:SetHeight(92)
+    message:SetHeight(120)
     message:SetJustifyV("MIDDLE")
     message:SetWordWrap(true)
 
@@ -1360,17 +1641,31 @@ function GMH.UI:CreateRankConfirmationFrame()
     cancelButton:SetPoint("BOTTOMLEFT", frame, "BOTTOM", 8, 20)
 
     cancelButton:SetScript("OnClick", function()
-        frame:Hide()
-        self.rankChangePending = nil
+        if self.rankChangeQueueRunning then
+            -- Прерываем очередь и закрываем окно.
+            self:StopRankChangeQueue()
+            frame:Hide()
+            self.rankChangePending = nil
+        else
+            frame:Hide()
+            self.rankChangePending = nil
+        end
     end)
 
     yesButton:SetScript("OnClick", function()
-        frame:Hide()
+        -- Не закрываем окно; кнопка "Отменить" будет прерывать процесс.
+        yesButton:Enable(false)
+        cancelButton:Enable(false)
         self:StartRankChangeQueue()
     end)
 
+    -- Expose yes and stop buttons to allow enabling/disabling from callers.
+    self.rankConfirmYesButton = yesButton
+
     self.rankConfirmFrame = frame
     self.rankConfirmMessage = message
+
+    -- Stop button removed: cancelling the modal now interrupts the queue.
 
     return frame
 end
@@ -1400,11 +1695,299 @@ function GMH.UI:ShowRankChangeConfirmation(clickedMember, targetRankIndex)
 
     local frame = self:CreateRankConfirmationFrame()
 
+    -- Заполняем сообщение и разрешаем подтверждение сразу (ранг уже выбран).
     self.rankConfirmMessage:SetText(self:BuildRankChangeConfirmationText(#targets, targetRankName, skipped))
+    if self.rankConfirmYesButton then
+        self.rankConfirmYesButton:Enable(true)
+    end
 
     frame:ClearAllPoints()
     frame:SetPoint("CENTER", self.mainFrame, "CENTER", 0, 0)
     frame:Show()
+end
+
+function GMH.UI:ShowBulkActionMenu(button)
+    if not button then
+        return
+    end
+
+    if self.bulkActionMenu and self.bulkActionMenu:IsShown() and self.bulkActionMenuOwner == button then
+        self.bulkActionMenu:Hide()
+        return
+    end
+
+    if not self.bulkActionMenu then
+        local menu = CreateFrame("Frame", "GMHelperBulkActionMenu", UIParent)
+        menu:SetWidth(220)
+        menu:SetHeight(1)
+        menu:SetFrameStrata("TOOLTIP")
+        menu:SetToplevel(true)
+        menu:EnableMouse(true)
+        menu:Hide()
+        SetSolidBackground(menu, COLORS.header)
+
+        self.bulkActionMenu = menu
+    end
+
+    local menu = self.bulkActionMenu
+
+    for _, child in ipairs({menu:GetChildren()}) do
+        child:Hide()
+    end
+
+    local options = {
+        { label = "Исключить выбранных" , action = function() self:ShowRemoveConfirmation() end },
+        { label = "Изменить звания" , action = function() self:ShowBulkRankSelection() end }
+    }
+
+    local rowHeight = 26
+    menu:SetHeight(#options * rowHeight)
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -2)
+    menu:Show()
+
+    self.bulkActionMenuOwner = button
+
+    for index, option in ipairs(options) do
+        local item = CreateFrame("Button", nil, menu)
+        item:SetWidth(220)
+        item:SetHeight(rowHeight)
+        item:SetPoint("TOPLEFT", menu, "TOPLEFT", 0, -(index - 1) * rowHeight)
+
+        local background = item:CreateTexture(nil, "BACKGROUND")
+        background:SetAllPoints(item)
+        background:SetTexture(1, 1, 1, 1)
+        background:SetVertexColor(1, 1, 1, 0.03)
+
+        local label = CreateText(item, 12, COLORS.text, "LEFT")
+        label:SetPoint("LEFT", item, "LEFT", 8, 0)
+        label:SetWidth(200)
+        label:SetHeight(rowHeight)
+        label:SetJustifyV("MIDDLE")
+        label:SetWordWrap(false)
+        label:SetText(option.label)
+
+        item:SetScript("OnEnter", function()
+            background:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.18)
+        end)
+
+        item:SetScript("OnLeave", function()
+            background:SetVertexColor(1, 1, 1, 0.03)
+        end)
+
+        item:SetScript("OnClick", function()
+            menu:Hide()
+            option.action()
+        end)
+    end
+end
+
+function GMH.UI:ShowBulkRankSelection()
+    if not self.rankContext or not self.rankContext.available then
+        GMH:Print("Не удалось определить права текущего персонажа.")
+        return
+    end
+
+    local selected = self:GetSelectedMembers()
+    if #selected == 0 then
+        GMH:Print("Не выбрано ни одного персонажа.")
+        return
+    end
+
+    local actorRank = tonumber(self.rankContext.rankIndex)
+    if not actorRank then
+        GMH:Print("Не удалось определить ваше звание.")
+        return
+    end
+
+    local options = {}
+    local names = self:GetGuildRankNames()
+
+    for rankIndex = actorRank + 1, (self.guildRankCount or 0) - 1 do
+        -- проверить, есть ли хотя бы один выбранный, для которого допустимо это звание
+        local any = false
+        for _, member in ipairs(selected) do
+            if self:CanSetMemberRank(member, rankIndex) then
+                any = true
+                break
+            end
+        end
+
+        if any then
+            options[#options + 1] = { rankIndex = rankIndex, rankName = names[rankIndex] }
+        end
+    end
+
+    if #options == 0 then
+        GMH:Print("Нет допустимых званий для выбранных персонажей.")
+        return
+    end
+
+    -- Используем фрейм подтверждения для выбора ранга внутри него.
+    local frame = self:CreateRankConfirmationFrame()
+
+    -- Очищаем предыдущие объекты выпадающего списка, если есть
+    if self.rankConfirmDropdown and self.rankConfirmDropdown.menu then
+        self.rankConfirmDropdown.menu:Hide()
+    end
+
+    -- Встроенный dropdown выбора звания. Он должен быть поверх модалки.
+    local dropdown = self.rankConfirmDropdown
+    if not dropdown then
+        dropdown = CreateFrame("Button", nil, frame)
+        dropdown:SetWidth(320)
+        dropdown:SetHeight(30)
+        -- Anchor dropdown below the message so it shifts when message grows.
+        dropdown:SetPoint("TOP", self.rankConfirmMessage, "BOTTOM", 0, -12)
+        dropdown:SetFrameStrata("TOOLTIP")
+        dropdown:SetFrameLevel(frame:GetFrameLevel() + 100)
+        dropdown:EnableMouse(true)
+
+        local bg = dropdown:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(dropdown)
+        bg:SetTexture(1, 1, 1, 1)
+        bg:SetVertexColor(1, 1, 1, 0.05)
+
+        local label = CreateText(dropdown, 12, COLORS.text, "LEFT")
+        label:SetPoint("LEFT", dropdown, "LEFT", 8, 0)
+        label:SetWidth(260)
+        label:SetHeight(30)
+        label:SetJustifyV("MIDDLE")
+        label:SetText("Выберите звание...")
+
+        local arrow = CreateText(dropdown, 12, COLORS.muted, "CENTER")
+        arrow:SetPoint("RIGHT", dropdown, "RIGHT", -8, 0)
+        arrow:SetWidth(16)
+        arrow:SetHeight(30)
+        arrow:SetText("v")
+
+        dropdown.label = label
+        dropdown.arrow = arrow
+
+        dropdown.menu = CreateFrame("Frame", nil, UIParent)
+        dropdown.menu:SetWidth(300)
+        dropdown.menu:SetFrameStrata("TOOLTIP")
+        dropdown.menu:SetToplevel(true)
+        dropdown.menu:Hide()
+        dropdown.menu:SetFrameLevel(frame:GetFrameLevel() + 250)
+        dropdown.menu:SetClampedToScreen(true)
+
+        local menuBg = dropdown.menu:CreateTexture(nil, "BACKGROUND")
+        menuBg:SetAllPoints(dropdown.menu)
+        menuBg:SetTexture(1, 1, 1, 1)
+        menuBg:SetVertexColor(0.02, 0.025, 0.035, 0.98)
+        dropdown.menu._background = menuBg
+
+        self.rankConfirmDropdown = dropdown
+    end
+
+    -- Build menu items
+    for _, child in ipairs({dropdown.menu:GetChildren()}) do
+        child:Hide()
+    end
+
+    local rowH = 26
+    for i, option in ipairs(options) do
+        local item = CreateFrame("Button", nil, dropdown.menu)
+        item:SetWidth(300)
+        item:SetHeight(rowH)
+        item:SetPoint("TOPLEFT", dropdown.menu, "TOPLEFT", 0, -(i - 1) * rowH)
+
+        local bg = item:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(item)
+        bg:SetTexture(1, 1, 1, 1)
+        -- Use opaque/dark background so modal content does not show through
+        bg:SetVertexColor(0.06, 0.07, 0.09, 1)
+        item._background = bg
+
+        local lbl = CreateText(item, 12, COLORS.text, "LEFT")
+        lbl:SetPoint("LEFT", item, "LEFT", 8, 0)
+        lbl:SetWidth(284)
+        lbl:SetHeight(rowH)
+        lbl:SetJustifyV("MIDDLE")
+        lbl:SetText(option.rankName)
+
+        item:SetScript("OnEnter", function()
+            bg:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.18)
+        end)
+        item:SetScript("OnLeave", function()
+            bg:SetVertexColor(0.06, 0.07, 0.09, 1)
+        end)
+
+        item:SetScript("OnClick", function()
+            -- set selection
+            dropdown.label:SetText(option.rankName)
+
+            local selectedMembers = selected
+            local targets = {}
+            for _, m in ipairs(selectedMembers) do
+                if self:CanSetMemberRank(m, option.rankIndex) then
+                    targets[#targets + 1] = m
+                end
+            end
+
+            local skipped = #selectedMembers - #targets
+
+            self.rankChangePending = {
+                members = targets,
+                targetRankIndex = option.rankIndex,
+                targetRankName = option.rankName
+            }
+
+            self.rankConfirmMessage:SetText(self:BuildRankChangeConfirmationText(#targets, option.rankName, skipped))
+            if self.rankConfirmYesButton then
+                self.rankConfirmYesButton:Enable(true)
+            end
+
+            dropdown.menu:Hide()
+        end)
+    end
+
+    dropdown.menu:SetHeight(#options * rowH)
+    dropdown.menu:ClearAllPoints()
+    dropdown.menu:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -2)
+    dropdown.menu:SetFrameLevel(frame:GetFrameLevel() + 250)
+
+    dropdown:SetScript("OnClick", function()
+        if dropdown.menu:IsShown() then
+            dropdown.menu:Hide()
+        else
+            dropdown.menu:Show()
+            dropdown.menu:SetFrameLevel(frame:GetFrameLevel() + 250)
+        end
+    end)
+
+    -- По умолчанию запрещаем подтверждение пока не выбран ранг.
+    if self.rankConfirmYesButton then
+        self.rankConfirmYesButton:Enable(false)
+    end
+
+    -- Показываем окно подтверждения в центре и dropdown
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", self.mainFrame, "CENTER", 0, 0)
+    self.rankConfirmMessage:SetText("Выберите звание для выбранных персонажей и подтвердите действие.")
+    frame:Show()
+end
+
+function GMH.UI:StopRankChangeQueue()
+    if not self.rankChangeQueueRunning then
+        return
+    end
+
+    self.rankChangeQueueRunning = false
+    self.rankChangeQueue = nil
+    self.rankChangeQueueIndex = nil
+
+    if self._rankChangeFrame then
+        self._rankChangeFrame:SetScript("OnUpdate", nil)
+    end
+
+    GMH:Print("Очередь изменения званий была прервана.")
+    -- Закрываем модальное окно при отмене
+    if self.rankConfirmFrame then
+        self.rankConfirmFrame:Hide()
+    end
+    self:Refresh()
 end
 
 function GMH.UI:StartRankChangeQueue()
@@ -1441,6 +2024,9 @@ function GMH.UI:StartRankChangeQueue()
     self.rankChangeQueueRunning = true
     self.rankChangePending = nil
 
+    -- Показать кнопку прерывания в модальном окне, если есть
+    -- no inline stop button; cancellation will interrupt the queue
+
     self:UpdateSelectionCount()
     self:ProcessRankChangeQueue()
 end
@@ -1459,7 +2045,13 @@ function GMH.UI:ProcessRankChangeQueue()
         self.rankChangeQueue = nil
         self.rankChangeQueueIndex = nil
 
+        -- no inline stop button to hide
+
         GMH:Print("Очередь изменения званий завершена.")
+        -- Закрываем модальное окно по завершении
+        if self.rankConfirmFrame then
+            self.rankConfirmFrame:Hide()
+        end
         self:Refresh()
         return
     end
@@ -1771,7 +2363,7 @@ function GMH.UI:CreateRow(member, rowIndex)
     local x = canRemoveMembers and 36 or 0
 
     local function AddCell(width, justify, color, offset)
-        local cell = CreateText(row, 10, color or COLORS.text, justify or "LEFT")
+        local cell = CreateText(row, 12, color or COLORS.text, justify or "LEFT")
         cell:SetDrawLayer("OVERLAY")
         cell:SetPoint("LEFT", row, "LEFT", offset or x, 0)
         cell:SetWidth(width)
@@ -1799,14 +2391,14 @@ function GMH.UI:CreateRow(member, rowIndex)
     rankBg:SetTexture(1, 1, 1, 1)
     rankBg:SetVertexColor(1, 1, 1, 0.001)
 
-    local rankLabel = CreateText(rankButton, 10, COLORS.text, "LEFT")
+    local rankLabel = CreateText(rankButton, 12, COLORS.text, "LEFT")
     rankLabel:SetPoint("LEFT", rankButton, "LEFT", 7, 0)
     rankLabel:SetWidth(92)
     rankLabel:SetHeight(32)
     rankLabel:SetJustifyV("MIDDLE")
     rankLabel:SetWordWrap(false)
 
-    local arrow = CreateText(rankButton, 10, COLORS.muted, "CENTER")
+    local arrow = CreateText(rankButton, 12, COLORS.muted, "CENTER")
     arrow:SetPoint("RIGHT", rankButton, "RIGHT", -5, 0)
     arrow:SetWidth(12)
     arrow:SetHeight(32)
@@ -1905,12 +2497,22 @@ function GMH.UI:UpdateRow(row, member, visibleIndex, absoluteIndex)
     row.checkbox:SetEnabled(currentCanRemove)
     row.checkbox:SetChecked(currentCanRemove and member.selected and true or false)
 
-    local nameColor = member.isOnline and COLORS.text or COLORS.muted
+    local defaultColor = member.isOnline and COLORS.text or COLORS.muted
+    -- Color name by class if available
+    local classColor = nil
+    if member.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[member.class] then
+        classColor = RAID_CLASS_COLORS[member.class]
+    end
+
     row.nameCell:SetText(tostring(member.name or ""))
-    row.nameCell:SetTextColor(nameColor[1], nameColor[2], nameColor[3], 1)
+    if classColor then
+        row.nameCell:SetTextColor(classColor.r, classColor.g, classColor.b, 1)
+    else
+        row.nameCell:SetTextColor(defaultColor[1], defaultColor[2], defaultColor[3], 1)
+    end
 
     row.levelCell:SetText(tostring(member.level or ""))
-    row.levelCell:SetTextColor(nameColor[1], nameColor[2], nameColor[3], 1)
+    row.levelCell:SetTextColor(defaultColor[1], defaultColor[2], defaultColor[3], 1)
 
     row.rankLabel:SetText(tostring(member.rankName or ""))
     local rankOptions = self:GetRankOptionsForMember(member)
@@ -2196,9 +2798,7 @@ function GMH.UI:CreateRemoveConfirmationFrame()
 end
 
 function GMH.UI:ShowRemoveConfirmation()
-    if not self.removeButton then
-        return
-    end
+    -- no early UI guard; check permissions instead
 
     if not GMH.Permissions:Can("remove_member") then
         GMH:Print("У вас нет права исключать персонажей из гильдии.")
@@ -2318,7 +2918,7 @@ function GMH.UI:UpdateSelectionCount()
     end
 
     if self.selectionLabel then
-        self.selectionLabel:SetText("Выбрано: " .. tostring(selected))
+        self.selectionLabel:SetText("Выбрано: " .. tostring(selected) .. " (в списке: " .. tostring(visible) .. ")")
     end
 
     ------------------------------------------------------------
@@ -2330,22 +2930,22 @@ function GMH.UI:UpdateSelectionCount()
 
     local canRemove = GMH.Permissions:Can("remove_member")
 
+    local hasSelection = selected > 0
+
     if selectAll then
         selectAll:SetChecked(canRemove and visible > 0 and visibleSelected == visible)
     end
 
-    if self.removeButton then
-        local hasSelection = selected > 0
+    if self.actionButton then
+        -- По умолчанию кнопка скрыта.
+        self.actionButton:Hide()
+        self.actionButton:Enable(false)
 
-        -- По умолчанию кнопка всегда скрыта.
-        self.removeButton:Hide()
-        self.removeButton:Enable(false)
-
-        if canRemove and hasSelection then
-            self.removeButton._label:SetText("Исключить выбранных (" .. tostring(selected) .. ")")
-            self.removeButton._background:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.16)
-            self.removeButton:Show()
-            self.removeButton:Enable(true)
+        if hasSelection then
+            self.actionButton._label:SetText("Действия (" .. tostring(selected) .. ")")
+            self.actionButton._background:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.16)
+            self.actionButton:Show()
+            self.actionButton:Enable(true)
         end
     end
 end
@@ -2389,27 +2989,232 @@ function GMH.UI:OnGuildRosterUpdate()
         return
     end
 
+    -- Permissions and roster may have changed; update column visibility/layout first
+    self:UpdateColumns()
     self:RefreshRosterCache()
     self:RefreshRoster()
 end
 
+function GMH.UI:CreateSettingsFrame()
+    if self.settingsFrame then
+        return self.settingsFrame
+    end
+
+    local frame = CreateFrame("Frame", "GMHelperSettingsFrame", UIParent)
+    frame:SetWidth(310)
+    frame:SetHeight(245)
+    frame:SetFrameStrata("TOOLTIP")
+    frame:SetToplevel(true)
+    frame:EnableMouse(true)
+    frame:Hide()
+    SetSolidBackground(frame, COLORS.background)
+
+    local header = CreateFrame("Frame", nil, frame)
+    header:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    header:SetHeight(42)
+    SetSolidBackground(header, COLORS.header)
+
+    local title = CreateText(header, 14, COLORS.text)
+    title:SetPoint("LEFT", header, "LEFT", 14, 0)
+    title:SetText("Настройки GMHelper")
+
+    local close = CreateFrame("Button", nil, header, "UIPanelCloseButton")
+    close:SetWidth(28)
+    close:SetHeight(28)
+    close:SetPoint("TOPRIGHT", header, "TOPRIGHT", -2, -2)
+    close:SetScript("OnClick", function()
+        frame:Hide()
+    end)
+
+    local info = CreateText(frame, 10, COLORS.muted, "LEFT")
+    info:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -55)
+    info:SetWidth(282)
+    info:SetHeight(32)
+    info:SetText("ПКМ по кнопке: открыть настройки.\nЛКМ с перемещением: изменить положение кнопки.")
+
+    local modeLabel = CreateText(frame, 11, COLORS.text)
+    modeLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -96)
+    modeLabel:SetText("Расположение кнопки")
+
+    local freeButton = CreateButton(frame, 125, 32, "Свободное")
+    freeButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -120)
+
+    local minimapButton = CreateButton(frame, 125, 32, "У мини-карты")
+    minimapButton:SetPoint("LEFT", freeButton, "RIGHT", 8, 0)
+
+    local function UpdateModeButtons()
+        local mode = GMHelperDB.button.mode or "free"
+
+        if mode == "minimap" then
+            minimapButton._background:SetVertexColor(COLORS.allowed[1], COLORS.allowed[2], COLORS.allowed[3], 0.25)
+            freeButton._background:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.16)
+        else
+            freeButton._background:SetVertexColor(COLORS.allowed[1], COLORS.allowed[2], COLORS.allowed[3], 0.25)
+            minimapButton._background:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.16)
+        end
+
+        if self.toggleButton then
+            UpdateToggleButtonVisualState(self.toggleButton)
+        end
+    end
+
+    local function ApplyButtonMode(mode)
+        GMHelperDB.button.mode = mode
+        local button = self.toggleButton
+        if not button then
+            return
+        end
+        local prevMode = GMHelperDB.button.mode or "free"
+
+        -- If switching away from free mode, save the free position so it can be restored later
+        if prevMode == "free" and mode == "minimap" and button then
+            local p, _, rp, ox, oy = button:GetPoint()
+            if p and rp then
+                GMHelperDB.button.freePoint = p
+                GMHelperDB.button.freeRelativePoint = rp
+                GMHelperDB.button.freeX = ox
+                GMHelperDB.button.freeY = oy
+            end
+        end
+
+        button:SetParent(mode == "minimap" and Minimap or UIParent)
+        button:ClearAllPoints()
+
+        if mode == "minimap" then
+            PositionButtonOnMinimap(button, GMHelperDB.button.angle or math.rad(45))
+        else
+            local data = {
+                point = GMHelperDB.button.freePoint or GMHelperDB.button.point,
+                relativePoint = GMHelperDB.button.freeRelativePoint or GMHelperDB.button.relativePoint,
+                x = GMHelperDB.button.freeX or GMHelperDB.button.x,
+                y = GMHelperDB.button.freeY or GMHelperDB.button.y,
+            }
+            ApplySavedPosition(button, data, "CENTER", "CENTER", 220, -120)
+        end
+
+        UpdateToggleButtonVisualState(button)
+        -- Reconfigure drag/click handlers to match new mode
+        EnableMovingButton(button)
+        UpdateModeButtons()
+    end
+
+    freeButton:SetScript("OnClick", function()
+        ApplyButtonMode("free")
+    end)
+
+    minimapButton:SetScript("OnClick", function()
+        ApplyButtonMode("minimap")
+    end)
+
+    local resetButton = CreateButton(frame, 126, 32, "Сбросить кнопку")
+    resetButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -165)
+    resetButton:SetScript("OnClick", function()
+        GMHelperDB.button.point = "CENTER"
+        GMHelperDB.button.relativePoint = "CENTER"
+        GMHelperDB.button.x = 220
+        GMHelperDB.button.y = -120
+        -- also reset free-mode saved values
+        -- free-mode default: center of screen
+        GMHelperDB.button.freePoint = "CENTER"
+        GMHelperDB.button.freeRelativePoint = "CENTER"
+        GMHelperDB.button.freeX = 0
+        GMHelperDB.button.freeY = 0
+        GMHelperDB.button.mode = "free"
+        GMHelperDB.button.angle = math.rad(45)
+        GMHelperDB.button.radius = nil
+
+        if self.toggleButton then
+            -- Use ApplyButtonMode to ensure parent, frame level and visual state are updated
+            ApplyButtonMode("free")
+        end
+
+        UpdateModeButtons()
+        GMH:Print("Позиция кнопки сброшена.")
+    end)
+
+    local resetWindowButton = CreateButton(frame, 126, 32, "Сбросить окно")
+    resetWindowButton:SetPoint("LEFT", resetButton, "RIGHT", 8, 0)
+    resetWindowButton:SetScript("OnClick", function()
+        if self.mainFrame then
+            -- Set stored values first, then apply them so ApplySavedPosition uses updated data.
+            GMHelperDB.window.point = "CENTER"
+            GMHelperDB.window.relativePoint = "CENTER"
+            GMHelperDB.window.x = 0
+            GMHelperDB.window.y = 0
+            ApplySavedPosition(self.mainFrame, GMHelperDB.window, "CENTER", "CENTER", 0, 0)
+            GMH:Print("Позиция окна GMHelper сброшена.")
+        end
+    end)
+
+    local note = CreateText(frame, 9, COLORS.muted, "LEFT")
+    note:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -210)
+    note:SetWidth(282)
+    note:SetHeight(25)
+    note:SetText("Сброс кнопки возвращает её в свободный режим.\nСброс окна центрирует окно GMHelper.")
+
+    self.settingsFrame = frame
+    self.settingsUpdateModeButtons = UpdateModeButtons
+    return frame
+end
+
+function GMH.UI:ToggleSettings()
+    local frame = self:CreateSettingsFrame()
+    self:CreateToggleButton()
+
+    if frame:IsShown() then
+        frame:Hide()
+        return
+    end
+
+    -- Окно настроек всегда открываем по центру экрана,
+    -- независимо от положения кнопки GMHelper. Это особенно важно,
+    -- когда кнопка находится у края экрана.
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    if self.settingsUpdateModeButtons then
+        self.settingsUpdateModeButtons()
+    end
+    frame:Show()
+end
+
 function GMH.UI:CreateToggleButton()
     if self.toggleButton then
+        if GMHelperDB.button.mode == "minimap" then
+            self.toggleButton:SetParent(Minimap)
+        else
+            self.toggleButton:SetParent(UIParent)
+        end
+        UpdateToggleButtonVisualState(self.toggleButton)
         return self.toggleButton
     end
 
-    local button = CreateFrame("Button", "GMHelperToggleButton", UIParent)
-    button:SetWidth(46)
-    button:SetHeight(46)
-    button:SetFrameStrata("DIALOG")
+    local parent = (GMHelperDB.button.mode == "minimap" and Minimap) or UIParent
+    local button = CreateFrame("Button", "GMHelperToggleButton", parent)
+    button:SetFrameStrata("MEDIUM")
+    if GMHelperDB.button.mode == "minimap" and Minimap then
+        button:SetFrameLevel(Minimap:GetFrameLevel() + 10)
+    else
+        button:SetFrameLevel(100)
+    end
     button:SetClampedToScreen(true)
+    button:SetSize(32, 32)
 
-    local icon = button:CreateTexture(nil, "ARTWORK")
+    local icon = button:CreateTexture(nil, "BACKGROUND")
     icon:SetPoint("CENTER", button, "CENTER", 0, 0)
-    icon:SetWidth(36)
-    icon:SetHeight(36)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_Book_07")
+    icon:SetSize(22, 22)
+    icon:SetTexture("Interface\\AddOns\\GMHelper\\Textures\\GMHelperIcon")
+    pcall(function() icon:SetTexCoord(0.10, 0.90, 0.10, 0.90) end)
     button.icon = icon
+
+    local border = button:CreateTexture(nil, "OVERLAY")
+    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    border:SetSize(56, 56)
+    border:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    button.overlay = border
+    button._minimapBorder = border
+
+    UpdateToggleButtonVisualState(button)
 
     button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "LeftButton" then
@@ -2421,7 +3226,8 @@ function GMH.UI:CreateToggleButton()
         GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
         GameTooltip:SetText("GMHelper", 1, 1, 1)
         GameTooltip:AddLine("ЛКМ — открыть / закрыть", 0.7, 0.7, 0.7)
-        GameTooltip:AddLine("ПКМ + перетаскивание — переместить", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("ПКМ — настройки", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("ЛКМ + перетаскивание — переместить", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
 
@@ -2431,7 +3237,17 @@ function GMH.UI:CreateToggleButton()
 
     EnableMovingButton(button)
 
-    ApplySavedPosition(button, GMHelperDB.button, "CENTER", "CENTER", 220, -120)
+    if GMHelperDB.button.mode == "minimap" then
+        PositionButtonOnMinimap(button, GMHelperDB.button.angle or math.rad(45))
+    else
+        local data = {
+            point = GMHelperDB.button.freePoint or GMHelperDB.button.point,
+            relativePoint = GMHelperDB.button.freeRelativePoint or GMHelperDB.button.relativePoint,
+            x = GMHelperDB.button.freeX or GMHelperDB.button.x,
+            y = GMHelperDB.button.freeY or GMHelperDB.button.y,
+        }
+        ApplySavedPosition(button, data, "CENTER", "CENTER", 220, -120)
+    end
 
     self.toggleButton = button
     return button
