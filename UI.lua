@@ -651,6 +651,24 @@ function GMH.UI:CreateMainFrame()
     self.onlineButtonBackground = onlineBg
     self.onlineButtonLabel = onlineLabel
 
+    -- Tooltip and hover behavior: show explanatory tooltip when disabled by offline filter
+    onlineButton:EnableMouse(true)
+    onlineButton:SetMotionScriptsWhileDisabled(true)
+    onlineButton:SetScript("OnEnter", function()
+        if self.onlineButtonDisabledByFilter then
+            GameTooltip:SetOwner(onlineButton, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Недоступно при установленном фильтре по времени отсутствия")
+            GameTooltip:Show()
+        else
+            GameTooltip:SetOwner(onlineButton, "ANCHOR_RIGHT")
+            GameTooltip:SetText(GMHelperDB.roster.onlineOnly and "Показаны только онлайн" or "Показать только онлайн")
+            GameTooltip:Show()
+        end
+    end)
+    onlineButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
     local resetButton = CreateButton(toolbar, 78, 30, "Сбросить")
     resetButton:SetPoint("TOPLEFT", onlineButton, "TOPRIGHT", 8, 0)
     resetButton:SetScript("OnClick", function()
@@ -883,6 +901,7 @@ function GMH.UI:CreateMainFrame()
         GMHelperDB.roster.minLevel = self.minLevelBox:GetText() or ""
         GMHelperDB.roster.maxLevel = self.maxLevelBox:GetText() or ""
         GMHelperDB.roster.minOfflineValue = self.minOfflineValueBox:GetText() or ""
+        self:UpdateOnlineButton()
         self:RefreshRoster()
     end
 
@@ -899,6 +918,9 @@ function GMH.UI:CreateMainFrame()
     end)
 
     onlineButton:SetScript("OnClick", function()
+        if self.onlineButtonDisabledByFilter then
+            return
+        end
         GMHelperDB.roster.onlineOnly = not GMHelperDB.roster.onlineOnly
         self:UpdateOnlineButton()
         self:RefreshRoster()
@@ -1144,6 +1166,42 @@ end
 
 function GMH.UI:UpdateOnlineButton()
     local active = GMHelperDB.roster.onlineOnly
+    -- If an offline-age filter is set, the online-only mode is incompatible.
+    local hasOfflineFilter = false
+    local minOfflineValue = ParseLevel(GMHelperDB.roster.minOfflineValue)
+    if minOfflineValue and minOfflineValue > 0 then
+        hasOfflineFilter = true
+    end
+
+    self.onlineButtonDisabledByFilter = hasOfflineFilter
+
+    if self.onlineButton then
+        if hasOfflineFilter then
+            -- visually disable the button and prevent clicks
+            pcall(function() self.onlineButton:Disable() end)
+            -- dim background
+            self.onlineButtonBackground:SetVertexColor(COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], 0.12)
+            -- ensure internal flag is false
+            GMHelperDB.roster.onlineOnly = false
+            -- mark label red and ensure it's visible
+            if self.onlineButtonLabel then
+                self.onlineButtonLabel:SetTextColor(COLORS.denied[1], COLORS.denied[2], COLORS.denied[3], COLORS.denied[4])
+                self.onlineButtonLabel:SetAlpha(1)
+                -- ensure text remains correct
+                local txt = GMHelperDB.roster.onlineOnly and "Показаны только онлайн" or "Все участники"
+                self.onlineButtonLabel:SetText(txt)
+            end
+            return
+        else
+            pcall(function() self.onlineButton:Enable() end)
+            if self.onlineButtonLabel then
+                self.onlineButtonLabel:SetTextColor(COLORS.text[1], COLORS.text[2], COLORS.text[3], COLORS.text[4])
+                self.onlineButtonLabel:SetAlpha(1)
+                local txt = GMHelperDB.roster.onlineOnly and "Показаны только онлайн" or "Все участники"
+                self.onlineButtonLabel:SetText(txt)
+            end
+        end
+    end
 
     if active then
         self.onlineButtonBackground:SetVertexColor(COLORS.allowed[1], COLORS.allowed[2], COLORS.allowed[3], 0.20)
@@ -1187,6 +1245,15 @@ function GMH.UI:RefreshRosterCache()
     if not GetNumGuildMembers or not GetGuildRosterInfo then
         self.rosterCache = {}
         return
+    end
+
+    -- Ensure the game's roster is set to show offline members while GMHelper is reading it.
+    -- We do this regardless of the addon's own onlineOnly filter so the addon
+    -- always reads a full roster and applies its own filtering locally.
+    if SetGuildRosterShowOffline then
+        pcall(SetGuildRosterShowOffline, true)
+        -- Request a fresh roster from the server to ensure data is up-to-date.
+        GMH:RequestGuildRoster()
     end
 
     local previousSelection = {}
@@ -1374,10 +1441,8 @@ function GMH.UI:SortRoster(members)
         local va
         local vb
 
-        -- Звание сортируем по числовому rankIndex, а не по названию.
         -- В ростере WoW rankIndex определяет реальный порядок званий.
         if column == "rankName" then
-            va = tonumber(a.rankIndex) or 0
             vb = tonumber(b.rankIndex) or 0
         else
             va = a[column]
@@ -1690,6 +1755,9 @@ function GMH.UI:CreateRankConfirmationFrame()
     -- Keep the modal beneath the dropdown so the list remains on top.
     frame:SetFrameStrata("DIALOG")
     frame:SetFrameLevel(self.mainFrame:GetFrameLevel() + 20)
+    frame:EnableMouse(true)
+    frame:SetScript("OnMouseDown", function() end)
+    frame:SetScript("OnMouseUp", function() end)
     frame:Hide()
 
     frame:SetScript("OnHide", function()
@@ -2847,8 +2915,11 @@ function GMH.UI:CreateRemoveConfirmationFrame()
     local frame = CreateFrame("Frame", "GMHelperRemoveConfirmFrame", self.mainFrame)
     frame:SetWidth(520)
     frame:SetHeight(220)
-    frame:SetFrameStrata("TOOLTIP")
+    frame:SetFrameStrata("DIALOG")
     frame:SetFrameLevel(self.mainFrame:GetFrameLevel() + 20)
+    frame:EnableMouse(true)
+    frame:SetScript("OnMouseDown", function() end)
+    frame:SetScript("OnMouseUp", function() end)
     frame:Hide()
 
     SetSolidBackground(frame, {0.02, 0.025, 0.035, 0.98})
@@ -3083,6 +3154,19 @@ function GMH.UI:OnGuildRosterUpdate()
         return
     end
 
+    -- If the game's roster is currently set to hide offline members while
+    -- GMHelper is open, restore it to show offline so the addon always
+    -- works from a full roster. Request a fresh roster and wait for the
+    -- subsequent update to process the data to avoid reading a partial list.
+    if GetGuildRosterShowOffline and SetGuildRosterShowOffline then
+        local ok, showing = pcall(GetGuildRosterShowOffline)
+        if ok and not showing then
+            pcall(SetGuildRosterShowOffline, true)
+            GMH:RequestGuildRoster()
+            return
+        end
+    end
+
     -- Permissions and roster may have changed; update column visibility/layout first
     self:UpdateColumns()
     self:RefreshRosterCache()
@@ -3096,7 +3180,7 @@ function GMH.UI:CreateSettingsFrame()
 
     local frame = CreateFrame("Frame", "GMHelperSettingsFrame", UIParent)
     frame:SetWidth(310)
-    frame:SetHeight(245)
+    frame:SetHeight(290)
     frame:SetFrameStrata("TOOLTIP")
     frame:SetToplevel(true)
     frame:EnableMouse(true)
@@ -3202,7 +3286,7 @@ function GMH.UI:CreateSettingsFrame()
     end)
 
     local resetButton = CreateButton(frame, 126, 32, "Сбросить кнопку")
-    resetButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -165)
+    resetButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -156)
     resetButton:SetScript("OnClick", function()
         GMHelperDB.button.point = "CENTER"
         GMHelperDB.button.relativePoint = "CENTER"
@@ -3241,10 +3325,45 @@ function GMH.UI:CreateSettingsFrame()
         end
     end)
 
+    -- Option: close Blizzard Guild window when opening GMHelper
+    local closeGuildCheckbox = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    closeGuildCheckbox:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -224)
+    closeGuildCheckbox:SetWidth(20)
+    closeGuildCheckbox:SetHeight(20)
+    local closeGuildLabel = CreateText(frame, 10, COLORS.text)
+    closeGuildLabel:SetPoint("LEFT", closeGuildCheckbox, "RIGHT", 6, 0)
+    closeGuildLabel:SetText("Закрывать окно гильдии при открытии GMHelper")
+    closeGuildCheckbox:SetChecked(GMHelperDB.settings and GMHelperDB.settings.closeGuildOnOpen)
+    closeGuildCheckbox:SetScript("OnClick", function(self)
+        GMHelperDB.settings.closeGuildOnOpen = self:GetChecked() and true or false
+    end)
+
+    -- Option: close GMHelper when Blizzard Guild window opens
+    local closeAddonCheckbox = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    closeAddonCheckbox:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -250)
+    closeAddonCheckbox:SetWidth(20)
+    closeAddonCheckbox:SetHeight(20)
+    local closeAddonLabel = CreateText(frame, 10, COLORS.text)
+    closeAddonLabel:SetPoint("LEFT", closeAddonCheckbox, "RIGHT", 6, 0)
+    closeAddonLabel:SetText("Закрывать GMHelper при открытии окна гильдии")
+    closeAddonCheckbox:SetChecked(GMHelperDB.settings and GMHelperDB.settings.closeAddonOnGuildOpen)
+    closeAddonCheckbox:SetScript("OnClick", function(self)
+        GMHelperDB.settings.closeAddonOnGuildOpen = self:GetChecked() and true or false
+        -- Try to ensure GuildFrame hook exists when enabling this option
+        if GMHelperDB.settings.closeAddonOnGuildOpen and GuildFrame and not GMH._guildHooked then
+            GuildFrame:HookScript("OnShow", function()
+                if GMHelperDB.settings and GMHelperDB.settings.closeAddonOnGuildOpen and GMH.UI and GMH.UI.mainFrame and GMH.UI.mainFrame:IsShown() then
+                    GMH.UI.mainFrame:Hide()
+                end
+            end)
+            GMH._guildHooked = true
+        end
+    end)
+
     local note = CreateText(frame, 9, COLORS.muted, "LEFT")
-    note:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -210)
+    note:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -194)
     note:SetWidth(282)
-    note:SetHeight(25)
+    note:SetHeight(24)
     note:SetText("Сброс кнопки возвращает её в свободный режим.\nСброс окна центрирует окно GMHelper.")
 
     self.settingsFrame = frame
@@ -3354,6 +3473,11 @@ function GMH.UI:Toggle()
     if self.mainFrame:IsShown() then
         self.mainFrame:Hide()
     else
+        -- Optionally close Blizzard Guild window when opening GMHelper
+        if GMHelperDB.settings and GMHelperDB.settings.closeGuildOnOpen and GuildFrame and GuildFrame:IsShown() then
+            pcall(HideUIPanel, GuildFrame)
+        end
+
         -- Во время работы GMHelper всегда получает полный ростер,
         -- независимо от состояния стандартной галочки WoW.
         self:EnterRosterMode()

@@ -1,7 +1,7 @@
 local ADDON_NAME, GMH = ...
 
 GMH.NAME = "GMHelper - Помощник Гильдмастера"
-GMH.VERSION = "1.1.5"
+GMH.VERSION = "1.2.0"
 GMH.DB_VERSION = 4
 
 GMHelperDB = GMHelperDB or {}
@@ -51,6 +51,10 @@ local function InitDB()
         onlineOnly = false,
         minOfflineDays = ""
     }
+
+    GMHelperDB.settings = GMHelperDB.settings or {}
+    GMHelperDB.settings.closeGuildOnOpen = GMHelperDB.settings.closeGuildOnOpen or false
+    GMHelperDB.settings.closeAddonOnGuildOpen = GMHelperDB.settings.closeAddonOnGuildOpen or false
 end
 
 function GMH:Print(message)
@@ -95,6 +99,29 @@ function GMH:Initialize()
 
     -- UI уже создан: теперь запрашиваем ростер.
     self:RequestGuildRoster()
+
+    -- Try to hook Blizzard GuildFrame so we can optionally close the addon when the guild window opens.
+    local function tryHookGuild()
+        if GuildFrame and not GMH._guildHooked then
+            GuildFrame:HookScript("OnShow", function()
+                if GMHelperDB.settings and GMHelperDB.settings.closeAddonOnGuildOpen and GMH.UI and GMH.UI.mainFrame and GMH.UI.mainFrame:IsShown() then
+                    GMH.UI.mainFrame:Hide()
+                end
+            end)
+            GMH._guildHooked = true
+        end
+    end
+
+    tryHookGuild()
+    if not GMH._guildHooked then
+        local waiter = CreateFrame("Frame")
+        waiter:SetScript("OnUpdate", function(self)
+            tryHookGuild()
+            if GMH._guildHooked then
+                self:SetScript("OnUpdate", nil)
+            end
+        end)
+    end
 
     self.initialized = true
 end
