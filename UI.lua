@@ -568,6 +568,7 @@ function GMH.UI:CreateMainFrame()
         option:SetScript("OnClick", function()
             GMHelperDB.roster.minOfflineUnit = value
             unitMenu:Hide()
+            self:ClearRosterSelection()
             self:UpdateOfflineFilterUnit()
             self:RefreshRoster()
             -- return focus to the unit proxy so keyboard users keep context
@@ -686,11 +687,7 @@ function GMH.UI:CreateMainFrame()
 
         self:UpdateOfflineFilterUnit()
         self:UpdateOnlineButton()
-        -- Clear all selections (uncheck all checkboxes)
-        local members = self:GetRosterData() or {}
-        for _, member in ipairs(members) do
-            member.selected = nil
-        end
+        self:ClearRosterSelection()
 
         self:UpdateSelectionCount()
         self:RefreshRoster()
@@ -901,6 +898,7 @@ function GMH.UI:CreateMainFrame()
         GMHelperDB.roster.minLevel = self.minLevelBox:GetText() or ""
         GMHelperDB.roster.maxLevel = self.maxLevelBox:GetText() or ""
         GMHelperDB.roster.minOfflineValue = self.minOfflineValueBox:GetText() or ""
+        self:ClearRosterSelection()
         self:UpdateOnlineButton()
         self:RefreshRoster()
     end
@@ -922,6 +920,7 @@ function GMH.UI:CreateMainFrame()
             return
         end
         GMHelperDB.roster.onlineOnly = not GMHelperDB.roster.onlineOnly
+        self:ClearRosterSelection()
         self:UpdateOnlineButton()
         self:RefreshRoster()
     end)
@@ -1846,6 +1845,12 @@ function GMH.UI:ShowRankChangeConfirmation(clickedMember, targetRankIndex)
     local frame = self:CreateRankConfirmationFrame()
 
     -- Заполняем сообщение и разрешаем подтверждение сразу (ранг уже выбран).
+    -- При одиночном изменении звание уже выбрано в колонке ростера,
+    -- поэтому список в модальном окне должен показывать именно его,
+    -- а не значение, оставшееся от предыдущего массового действия.
+    if self.rankConfirmDropdown and self.rankConfirmDropdown.label then
+        self.rankConfirmDropdown.label:SetText(targetRankName)
+    end
     self.rankConfirmMessage:SetText(self:BuildRankChangeConfirmationText(#targets, targetRankName, skipped))
     if self.rankConfirmYesButton then
         self.rankConfirmYesButton:Enable(true)
@@ -2506,7 +2511,13 @@ function GMH.UI:CreateRow(member, rowIndex)
     checkbox:SetScript("OnClick", function(self)
         -- Не замыкаем первоначальное значение права: оно может измениться
         -- после входа другим персонажем без пересоздания UI.
-        if row.member and GMH.Permissions:Can("remove_member") then
+        local isCurrentRow = row:IsShown()
+            and row.member
+            and row._absoluteIndex
+            and GMH.UI.visibleRoster
+            and GMH.UI.visibleRoster[row._absoluteIndex] == row.member
+
+        if isCurrentRow and GMH.Permissions:Can("remove_member") then
             row.member.selected = self:GetChecked() and true or false
             self:GetParent()._ui:UpdateSelectionCount()
         else
@@ -2643,6 +2654,7 @@ end
 function GMH.UI:UpdateRow(row, member, visibleIndex, absoluteIndex)
     row.member = member
     row._visibleIndex = visibleIndex
+    row._absoluteIndex = absoluteIndex
     row:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, -((absoluteIndex - 1) * 32))
     row:Show()
 
@@ -2753,6 +2765,10 @@ function GMH.UI:RefreshRoster()
     for _, member in ipairs(allMembers) do
         if self:MatchesFilter(member) then
             visibleMembers[#visibleMembers + 1] = member
+        else
+            -- A member hidden by the current filters must never remain
+            -- selected for a later bulk operation.
+            member.selected = false
         end
     end
 
@@ -2849,6 +2865,12 @@ function GMH.UI:UpdateScrollbar()
     self.scrollbarThumb:SetPoint("TOP", self.scrollbar, "TOP", 0, -position)
 
     self.scrollbarThumb.dragAvailable = available
+end
+
+function GMH.UI:ClearRosterSelection()
+    for _, member in ipairs(self:GetRosterData() or {}) do
+        member.selected = false
+    end
 end
 
 function GMH.UI:GetSelectedMembers()
