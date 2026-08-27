@@ -1246,10 +1246,14 @@ function GMH.UI:RefreshRosterCache()
         return
     end
 
-    -- Ensure the game's roster is set to show offline members while GMHelper is reading it.
-    -- We do this regardless of the addon's own onlineOnly filter so the addon
-    -- always reads a full roster and applies its own filtering locally.
-    if SetGuildRosterShowOffline then
+    -- Safe full-roster policy:
+    -- only force Blizzard's roster to show offline members when GMHelper is the
+    -- active guild UI. If the Blizzard guild window is already open, do not
+    -- override its user-selected setting or fight with its display state.
+    local guildWindowVisible = GuildFrame and GuildFrame:IsShown() and true or false
+    local shouldForceFullRoster = not guildWindowVisible and self.rosterModeActive
+
+    if SetGuildRosterShowOffline and shouldForceFullRoster then
         pcall(SetGuildRosterShowOffline, true)
         -- Request a fresh roster from the server to ensure data is up-to-date.
         GMH:RequestGuildRoster()
@@ -1321,7 +1325,9 @@ function GMH.UI:EnterRosterMode()
         self.previousShowOffline = nil
     end
 
-    if SetGuildRosterShowOffline then
+    -- Only force the full roster when GMHelper owns the guild UI. If Blizzard's
+    -- guild window is already visible, the user's checkbox takes priority.
+    if SetGuildRosterShowOffline and not (GuildFrame and GuildFrame:IsShown()) then
         SetGuildRosterShowOffline(true)
     end
 
@@ -1442,14 +1448,15 @@ function GMH.UI:SortRoster(members)
 
         -- В ростере WoW rankIndex определяет реальный порядок званий.
         if column == "rankName" then
+            va = tonumber(a.rankIndex) or 0
             vb = tonumber(b.rankIndex) or 0
         else
             va = a[column]
             vb = b[column]
 
             if column == "name" or column == "publicNote" or column == "officerNote" then
-                va = Lower(va)
-                vb = Lower(vb)
+                va = Lower(tostring(va or ""))
+                vb = Lower(tostring(vb or ""))
             else
                 va = tonumber(va) or 0
                 vb = tonumber(vb) or 0
@@ -3176,11 +3183,12 @@ function GMH.UI:OnGuildRosterUpdate()
         return
     end
 
-    -- If the game's roster is currently set to hide offline members while
-    -- GMHelper is open, restore it to show offline so the addon always
-    -- works from a full roster. Request a fresh roster and wait for the
-    -- subsequent update to process the data to avoid reading a partial list.
-    if GetGuildRosterShowOffline and SetGuildRosterShowOffline then
+    -- Respect the Blizzard guild window state whenever it is visible. GMHelper
+    -- may read a full roster on its own, but it must not override the player's
+    -- choice in "Показывать отсутствующих" while the native guild UI is active.
+    local guildWindowVisible = GuildFrame and GuildFrame:IsShown() and true or false
+
+    if GetGuildRosterShowOffline and SetGuildRosterShowOffline and not guildWindowVisible then
         local ok, showing = pcall(GetGuildRosterShowOffline)
         if ok and not showing then
             pcall(SetGuildRosterShowOffline, true)
@@ -3371,15 +3379,6 @@ function GMH.UI:CreateSettingsFrame()
     closeAddonCheckbox:SetChecked(GMHelperDB.settings and GMHelperDB.settings.closeAddonOnGuildOpen)
     closeAddonCheckbox:SetScript("OnClick", function(self)
         GMHelperDB.settings.closeAddonOnGuildOpen = self:GetChecked() and true or false
-        -- Try to ensure GuildFrame hook exists when enabling this option
-        if GMHelperDB.settings.closeAddonOnGuildOpen and GuildFrame and not GMH._guildHooked then
-            GuildFrame:HookScript("OnShow", function()
-                if GMHelperDB.settings and GMHelperDB.settings.closeAddonOnGuildOpen and GMH.UI and GMH.UI.mainFrame and GMH.UI.mainFrame:IsShown() then
-                    GMH.UI.mainFrame:Hide()
-                end
-            end)
-            GMH._guildHooked = true
-        end
     end)
 
     local note = CreateText(frame, 9, COLORS.muted, "LEFT")

@@ -24,13 +24,14 @@ local function Serialize(value)
 end
 
 function GMH.Debug:Run()
-    GMHelperDebugDB = GMHelperDebugDB or {}
-    GMHelperDebugDB.version = self.VERSION
-    GMHelperDebugDB.last = {
-        timestamp = date("%Y-%m-%d %H:%M:%S"),
-        player = UnitName("player"),
-        guild = GMH:GetPlayerGuildInfo(),
-        api = {}
+    GMHelperDebugDB = {
+        version = self.VERSION,
+        last = {
+            timestamp = date("%Y-%m-%d %H:%M:%S"),
+            player = UnitName("player"),
+            guild = GMH:GetPlayerGuildInfo(),
+            api = {}
+        }
     }
 
     local functions = {"GetGuildInfo", "GetNumGuildMembers", "GetGuildRosterInfo", "GuildRoster",

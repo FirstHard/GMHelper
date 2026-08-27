@@ -1,7 +1,7 @@
 local ADDON_NAME, GMH = ...
 
 GMH.NAME = "GMHelper - Помощник Гильдмастера"
-GMH.VERSION = "1.2.1"
+GMH.VERSION = "1.2.2"
 GMH.DB_VERSION = 4
 
 GMHelperDB = GMHelperDB or {}
